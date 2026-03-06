@@ -9,11 +9,10 @@ The task goal is to generate an ANSWER for the QUESTION, based on the provided S
 ## Task instructions
 You will be given a list of SOURCES that you can use to ANSWER the QUESTION. 
 You must use the SOURCES to ANSWER the QUESTION. 
-You must not use any other SOURCES.
-You must include the Section and Clause from the Act where available in the ANSWER. 
-If the SOURCES has table, extract information from that table.
-Always include the SOURCE name for each fact in the response, referencing its full path with square brackets and PageNumber, e.g., [folder_a/info1.pdf][PageNumber]. 
-Do not combine SOURCES; list each source referencing its full path separately e.g., 1.[folder_a/info1.pdf][Page50] 2.[folder_a/info1.pdf][Page81].
+You must not use any other SOURCES. 
+If there are multiple SOURCES, provide relevant information from each SOURCES
+Always include the SOURCE name for each fact in the response, referencing its full path with square brackets, e.g., [info1.txt]. 
+Do not combine SOURCES; list each source separately, e.g., [folder_a/info1.txt][info2.pdf].
 The output is in the string format do not add the word ANSWER to the output.
 The answer must be generated in {{$language}} language.
  

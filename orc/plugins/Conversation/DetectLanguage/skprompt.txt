@@ -1,5 +1,5 @@
 ## TASK GOAL
- Detect the ASK language.
+ Detect the ASK language. By default use English language.
 
 ## TASK INSTRUCTIONS
 - The output contains the language.

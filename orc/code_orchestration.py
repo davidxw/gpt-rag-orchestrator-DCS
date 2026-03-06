@@ -205,6 +205,7 @@ async def get_answer(history, security_ids,conversation_id):
 
             # triage (find intent and generate answer and search query when applicable)
             logging.debug(f"[code_orchest] checking intent. ask: {ask}")
+            logging.info(f"[code_orchest] checking intent. ask: {ask}")
             start_time = time.time()
             triage_dict = await triage(kernel, conversationPlugin, arguments)
             intents = triage_dict['intents']
@@ -223,6 +224,7 @@ async def get_answer(history, security_ids,conversation_id):
                 retrievalPlugin= await retrievalPluginTask
                 if(SEARCH_RETRIEVAL):
                     search_function_result = await kernel.invoke(retrievalPlugin["VectorIndexRetrieval"], KernelArguments(input=search_query,apim_key=apim_key,security_ids=security_ids))
+                    logging.info(f"[code_orchest] Search result : {search_function_result}")
                     formatted_sources = search_function_result.value[:100].replace('\n', ' ')
                     escaped_sources = escape_xml_characters(search_function_result.value)
                     search_sources=escaped_sources
@@ -251,6 +253,7 @@ async def get_answer(history, security_ids,conversation_id):
                 arguments["history"] = json.dumps(messages[:-1], ensure_ascii=False) # update context with full history
                 function_result = await call_semantic_function(kernel, conversationPlugin["Answer"], arguments)
                 answer =  str(function_result)
+                logging.info(f"[code_orchest] generating bot answer. answer: {answer}")
                 conversation_plugin_answer = answer
                 answer_generated_by = "conversation_plugin_answer"
                 prompt_tokens += get_usage_tokens(function_result, 'prompt')
@@ -258,6 +261,7 @@ async def get_answer(history, security_ids,conversation_id):
                 prompt = str(function_result.metadata['messages'][0])
                 response_time =  round(time.time() - start_time,2)              
                 logging.info(f"[code_orchest] finished generating bot answer. {response_time} seconds. {answer[:100]}.")
+                #logging.info(f"[code_orchest] finished generating bot answer. {response_time} seconds. {answer}.")
 
             # Handle general intents
             elif set(intents).intersection({"about_bot", "off_topic"}):
@@ -296,31 +300,31 @@ async def get_answer(history, security_ids,conversation_id):
                     break
         except Exception as e:
             logging.error(f"[code_orchest] could not get blocked list. {e}")
-    if GROUNDEDNESS_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
-            try:
-                logging.info(f"[code_orchest] checking if it is grounded. answer: {answer[:50]}")
-                groundness_time = time.time()            
-                arguments["answer"] = saxutils.escape(answer)                      
-                function_result = await call_semantic_function(kernel, conversationPlugin["IsGrounded"], arguments)
-                grounded =  str(function_result)
-                prompt_tokens += get_usage_tokens(function_result, 'prompt')
-                completion_tokens += get_usage_tokens(function_result, 'completion')            
-                logging.info(f"[code_orchest] is it grounded? {grounded}.")  
-                if grounded.lower() == 'no':
-                    logging.info(f"[code_orchest] ungrounded answer: {answer}")
-                    function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
-                    prompt_tokens += get_usage_tokens(function_result, 'prompt')
-                    completion_tokens += get_usage_tokens(function_result, 'completion')            
-                    answer =  str(function_result)
-                    answer_dict['gpt_groundedness'] = 1
-                    answer_generated_by = "gpt_groundedness_check"
-                    bypass_nxt_steps = True
-                else:
-                    answer_dict['gpt_groundedness'] = 5
-                response_time =  round(time.time() - groundness_time,2)
-                logging.info(f"[code_orchest] finished checking if it is grounded. {response_time} seconds.")
-            except Exception as e:
-                logging.error(f"[code_orchest] could not check answer is grounded. {e}")           
+    # if GROUNDEDNESS_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
+    #         try:
+    #             logging.info(f"[code_orchest] checking if it is grounded. answer: {answer[:50]}")
+    #             groundness_time = time.time()            
+    #             arguments["answer"] = saxutils.escape(answer)                      
+    #             function_result = await call_semantic_function(kernel, conversationPlugin["IsGrounded"], arguments)
+    #             grounded =  str(function_result)
+    #             prompt_tokens += get_usage_tokens(function_result, 'prompt')
+    #             completion_tokens += get_usage_tokens(function_result, 'completion')            
+    #             logging.info(f"[code_orchest] is it grounded? {grounded}.")  
+    #             if grounded.lower() == 'no':
+    #                 logging.info(f"[code_orchest] ungrounded answer: {answer}")
+    #                 function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
+    #                 prompt_tokens += get_usage_tokens(function_result, 'prompt')
+    #                 completion_tokens += get_usage_tokens(function_result, 'completion')            
+    #                 answer =  str(function_result)
+    #                 answer_dict['gpt_groundedness'] = 1
+    #                 answer_generated_by = "gpt_groundedness_check"
+    #                 bypass_nxt_steps = True
+    #             else:
+    #                 answer_dict['gpt_groundedness'] = 5
+    #             response_time =  round(time.time() - groundness_time,2)
+    #             logging.info(f"[code_orchest] finished checking if it is grounded. {response_time} seconds.")
+    #         except Exception as e:
+    #             logging.error(f"[code_orchest] could not check answer is grounded. {e}")           
 
     if RESPONSIBLE_AI_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
             try:

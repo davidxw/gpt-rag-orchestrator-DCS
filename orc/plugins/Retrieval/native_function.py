@@ -26,7 +26,7 @@ AZURE_OPENAI_EMBEDDING_MODEL = os.environ.get("AZURE_OPENAI_EMBEDDING_MODEL")
 AZURE_OPENAI_CHATGPT_MODEL = os.environ.get("AZURE_OPENAI_CHATGPT_MODEL")
 AZURE_OPENAI_CHATGPT_DEPLOYMENT = os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT")
 AZURE_OPENAI_RESOURCE = os.environ.get("AZURE_OPENAI_RESOURCE")
-AZURE_OPENAI_TEMPERATURE = os.getenv("AZURE_OPENAI_TEMPERATURE", "0.17")
+AZURE_OPENAI_TEMPERATURE = os.getenv("AZURE_OPENAI_TEMPERATURE", "0")
 AZURE_OPENAI_APIVERSION = os.environ.get("AZURE_OPENAI_APIVERSION")
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
 AZURE_OPENAI_EMBEDDING_APIVERSION = os.environ.get("AZURE_OPENAI_EMBEDDING_APIVERSION")
@@ -38,7 +38,7 @@ AZURE_SEARCH_API_VERSION = os.environ.get("AZURE_SEARCH_API_VERSION", "2024-07-0
 if AZURE_SEARCH_API_VERSION < '2023-10-01-Preview':  # query is using vectorQueries that requires at least 2023-10-01-Preview'.
     AZURE_SEARCH_API_VERSION = '2023-11-01'
 
-AZURE_SEARCH_TOP_K = os.environ.get("AZURE_SEARCH_TOP_K") or "3"
+AZURE_SEARCH_TOP_K = os.environ.get("AZURE_SEARCH_TOP_K") or "8"
 AZURE_SEARCH_USE_SEMANTIC = os.environ.get("AZURE_SEARCH_USE_SEMANTIC") or "false"
 AZURE_SEARCH_APPROACH = os.environ.get("AZURE_SEARCH_APPROACH") or "hybrid"
 AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH = os.environ.get("AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH") or "false"
@@ -50,6 +50,8 @@ AZURE_SEARCH_CONTENT_COLUMNS = os.environ.get("AZURE_SEARCH_CONTENT_COLUMNS") or
 AZURE_SEARCH_FILENAME_COLUMN = os.environ.get("AZURE_SEARCH_FILENAME_COLUMN") or "filepath"
 AZURE_SEARCH_TITLE_COLUMN = os.environ.get("AZURE_SEARCH_TITLE_COLUMN") or "title"
 AZURE_SEARCH_URL_COLUMN = os.environ.get("AZURE_SEARCH_URL_COLUMN") or "url"
+
+logging.info(f"[sk_retrieval] querying azure ai search. Azure Search Approach: {AZURE_SEARCH_APPROACH}")
 
 # Bing Search Integration Settings
 BING_SEARCH_TOP_K = os.environ.get("BING_SEARCH_TOP_K") or "3"
@@ -209,6 +211,7 @@ class Retrieval:
                                     logging.info(f"[sk_retrieval] {len(json['value'])} documents retrieved")
                                     for doc in json['value']:
                                         search_results.append(doc['filepath'] + ": " + doc['content'].strip() + "\n")
+                                        # logging.info(f"[sk_retrieval] Search results: {search_results}")
                                 else:
                                     logging.info(f"[sk_retrieval] No documents retrieved")
 
