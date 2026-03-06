@@ -1,0 +1,59 @@
+﻿timestamp [UTC],message,logLevel,severityLevel
+"3/6/2026, 1:44:05.318 AM","Executing 'Functions.orc' (Reason='This function was programmatically called via the host APIs.', Id=6641a102-e0f3-4836-b738-a9892bd43f1c)",Information,1
+"3/6/2026, 1:44:05.322 AM",Python HTTP trigger function processed a request.,Information,1
+"3/6/2026, 1:44:05.323 AM","[orchestrator] 61293ce2-4b69-4689-9363-d8cb6746d3e3 conversation_id is Empty, creating new conversation_id.",Information,1
+"3/6/2026, 1:44:05.323 AM",[orchestrator] 61293ce2-4b69-4689-9363-d8cb6746d3e3 starting conversation flow.,Information,1
+"3/6/2026, 1:44:05.456 AM","[orchestrator] customer sent an inexistent conversation_id, saving new conversation_id",Information,1
+"3/6/2026, 1:44:05.481 AM",[orchestrator] executing RAG retrieval using code orchestration,Information,1
+"3/6/2026, 1:44:05.482 AM",[code_orchest] starting RAG flow. What are key rights and responsibilities of tenant,Information,1
+"3/6/2026, 1:44:05.524 AM",[sk_retrieval] querying azure ai search. Azure Search Approach: hybrid,Information,1
+"3/6/2026, 1:44:05.529 AM",Function Filters-ContentFliterValidator invoking.,Information,1
+"3/6/2026, 1:44:05.529 AM",[sk_native_filters] querying azure openai on content filtering. user question: What are key rights and responsibilities of tenants under the Residential Tenancies Act 2010?,Information,1
+"3/6/2026, 1:44:06.617 AM",[util__module] called chat completion api in 1.070000 seconds,Information,1
+"3/6/2026, 1:44:06.618 AM",[sk_native_filters] finished validating user question on filtered content. 1.09 seconds,Information,1
+"3/6/2026, 1:44:06.618 AM",Function Filters-ContentFliterValidator succeeded.,Information,1
+"3/6/2026, 1:44:06.618 AM",Function completed. Duration: 1.088015s,Information,1
+"3/6/2026, 1:44:06.728 AM",[util__module] get_blocked_list: no blocked words list (keyvalue store with 'blocked_list' id does not exist).,Information,1
+"3/6/2026, 1:44:06.733 AM",[code_orchest] finished content filter and blocklist check. 1.25 seconds.,Information,1
+"3/6/2026, 1:44:06.734 AM",Function Conversation-DetectLanguage invoking.,Information,1
+"3/6/2026, 1:44:07.503 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/6/2026, 1:44:07.503 AM","OpenAI usage: CompletionUsage(completion_tokens=2, prompt_tokens=128, total_tokens=130, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0))",Information,1
+"3/6/2026, 1:44:07.503 AM",Function Conversation-DetectLanguage succeeded.,Information,1
+"3/6/2026, 1:44:07.504 AM",Function completed. Duration: 0.769708s,Information,1
+"3/6/2026, 1:44:07.504 AM",[code_orchest] finished detecting language: English. 0.77 seconds.,Information,1
+"3/6/2026, 1:44:07.505 AM",[code_orchest] first time talking no need to summarize.,Information,1
+"3/6/2026, 1:44:07.505 AM",[code_orchest] finished summarizing conversation: . 0.0 seconds.,Information,1
+"3/6/2026, 1:44:07.506 AM",Function Conversation-Triage invoking.,Information,1
+"3/6/2026, 1:44:09.508 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/6/2026, 1:44:09.508 AM","OpenAI usage: CompletionUsage(completion_tokens=79, prompt_tokens=1152, total_tokens=1231, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=1024))",Information,1
+"3/6/2026, 1:44:09.508 AM",Function Conversation-Triage succeeded.,Information,1
+"3/6/2026, 1:44:09.509 AM",Function completed. Duration: 2.007927s,Information,1
+"3/6/2026, 1:44:09.510 AM",[code_orchest] finished checking intents: ['question_answering']. 2.01 seconds.,Information,1
+"3/6/2026, 1:44:09.510 AM",Function Retrieval-VectorIndexRetrieval invoking.,Information,1
+"3/6/2026, 1:44:09.511 AM",[sk_retrieval] generating question embeddings. search query: Key tenant rights Residential Tenancies Act 2010,Information,1
+"3/6/2026, 1:44:09.603 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/text-embedding/embeddings?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/6/2026, 1:44:09.605 AM",[sk_retrieval] finished generating question embeddings. 0.1 seconds,Information,1
+"3/6/2026, 1:44:09.626 AM",[sk_retrieval] querying azure ai search. search query: Key tenant rights Residential Tenancies Act 2010,Information,1
+"3/6/2026, 1:44:09.721 AM",[sk_retrieval] 8 documents retrieved,Information,1
+"3/6/2026, 1:44:09.721 AM",[sk_retrieval] finished querying azure ai search. 0.1 seconds,Information,1
+"3/6/2026, 1:44:09.727 AM",Function Retrieval-VectorIndexRetrieval succeeded.,Information,1
+"3/6/2026, 1:44:09.730 AM",Function completed. Duration: 0.215357s,Information,1
+"ement un""",Information,1,
+"3/6/2026, 1:44:09.731 AM",[code_orchest] generating bot answer. ask: What are key rights and responsibilities of tenants under the Residential Tenancies Act 2010?,Information,1
+"3/6/2026, 1:44:09.731 AM",Function Conversation-Answer invoking.,Information,1
+"3/6/2026, 1:44:19.910 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/6/2026, 1:44:19.910 AM","OpenAI usage: CompletionUsage(completion_tokens=846, prompt_tokens=13308, total_tokens=14154, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=13184))",Information,1
+"3/6/2026, 1:44:19.911 AM",Function Conversation-Answer succeeded.,Information,1
+"3/6/2026, 1:44:19.911 AM",Function completed. Duration: 10.182614s,Information,1
+"3/6/2026, 1:44:19.916 AM",[code_orchest] finished generating bot answer. 10.18 seconds. ### Key Rights and Responsibilities of Tenants under the Residential Tenancies Act 2010 and Resident.,Information,1
+"3/6/2026, 1:44:19.918 AM",[code_orchest] checking responsible AI (fairness). answer: ### Key Rights and Responsibilities of Tenants und,Information,1
+"3/6/2026, 1:44:19.918 AM",Function Semantic-Fairness invoking.,Information,1
+"3/6/2026, 1:44:21.202 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/6/2026, 1:44:21.203 AM","OpenAI usage: CompletionUsage(completion_tokens=20, prompt_tokens=1117, total_tokens=1137, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0))",Information,1
+"3/6/2026, 1:44:21.203 AM",Function Semantic-Fairness succeeded.,Information,1
+"3/6/2026, 1:44:21.203 AM",Function completed. Duration: 1.294741s,Information,1
+"3/6/2026, 1:44:21.204 AM",[code_orchest] responsible ai check. Is it fair? True.,Information,1
+"3/6/2026, 1:44:21.204 AM",[code_orchest] finished checking responsible AI (fairness). 1.3 seconds.,Information,1
+"3/6/2026, 1:44:21.205 AM",[code_orchest] finished RAG Flow. 15.72 seconds.,Information,1
+"3/6/2026, 1:44:21.272 AM",[orchestrator] 61293ce2-4b69-4689-9363-d8cb6746d3e3 finished conversation flow. 15.88 seconds. answer: ### Key Rights and Responsibil,Information,1
+"3/6/2026, 1:44:21.275 AM","Executed 'Functions.orc' (Succeeded, Id=6641a102-e0f3-4836-b738-a9892bd43f1c, Duration=15956ms)",Information,1

@@ -10,6 +10,7 @@ from semantic_kernel.functions.kernel_arguments import KernelArguments
 from semantic_kernel.functions import KernelPlugin
 from shared.util import call_semantic_function, get_chat_history_as_messages, get_message, get_last_messages,get_possitive_int_or_default
 from shared.util import get_blocked_list, create_kernel, get_usage_tokens, escape_xml_characters,get_secret
+from shared.util import timed_step, get_token_counts
 import asyncio
 import xml.sax.saxutils as saxutils
 
@@ -137,33 +138,29 @@ async def get_answer(history, security_ids,conversation_id):
 
     if SECURITY_HUB_CHECK and not bypass_nxt_steps:
             try:
-                logging.info(f"[code_orchest] checking question with security hub. question: {ask[:50]}")
-                start_time = time.time()
-                arguments["answer"] = answer
-                security_hub_key=await get_secret("securityHubKey")
-                securityPlugin = await securityPluginTask
-                security_check = await kernel.invoke(securityPlugin["QuestionSecurityCheck"], KernelArguments(question=ask,security_hub_key=security_hub_key))
-                check_results = security_check.value["results"]
-                check_details = security_check.value["details"]
-                # New checks based on the updated requirements
-                all_passed = True
-                for name, status in check_results.items():
-                    if status.lower() != "passed":
-                        all_passed = False
-                        break
-                all_below_threshold = all(category["severity"] <= SECURITY_HUB_THRESHOLDS[index] for index,category in check_details.get("categoriesAnalysis", []))
-                any_blocklists_match = len(check_details.get("blocklistsMatch", [])) > 0
-                if not all_passed or not all_below_threshold or any_blocklists_match:
-                    logging.error(f"[code_orchest] failed security hub question checks. Details: {check_details}.")
-                    answer=get_message('BLOCKED_ANSWER')
-                    answer_dict['security_hub'] = 1
-                    answer_generated_by = "security_hub"
-                    bypass_nxt_steps = True
-                else:
-                    answer_dict['security_hub'] = 5
-                
-                response_time = round(time.time() - start_time, 2)
-                logging.info(f"[code_orchest] finished security hub checks. {response_time} seconds.")
+                with timed_step(f"checking question with security hub. question: {ask[:50]}"):
+                    arguments["answer"] = answer
+                    security_hub_key=await get_secret("securityHubKey")
+                    securityPlugin = await securityPluginTask
+                    security_check = await kernel.invoke(securityPlugin["QuestionSecurityCheck"], KernelArguments(question=ask,security_hub_key=security_hub_key))
+                    check_results = security_check.value["results"]
+                    check_details = security_check.value["details"]
+                    # New checks based on the updated requirements
+                    all_passed = True
+                    for name, status in check_results.items():
+                        if status.lower() != "passed":
+                            all_passed = False
+                            break
+                    all_below_threshold = all(category["severity"] <= SECURITY_HUB_THRESHOLDS[index] for index,category in check_details.get("categoriesAnalysis", []))
+                    any_blocklists_match = len(check_details.get("blocklistsMatch", [])) > 0
+                    if not all_passed or not all_below_threshold or any_blocklists_match:
+                        logging.error(f"[code_orchest] failed security hub question checks. Details: {check_details}.")
+                        answer=get_message('BLOCKED_ANSWER')
+                        answer_dict['security_hub'] = 1
+                        answer_generated_by = "security_hub"
+                        bypass_nxt_steps = True
+                    else:
+                        answer_dict['security_hub'] = 5
             except Exception as e:
                 logging.error(f"[code_orchest] could not execute security hub checks. {e}")  
                 function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
@@ -171,6 +168,7 @@ async def get_answer(history, security_ids,conversation_id):
                 answer_dict['security_hub'] = 1
                 answer_generated_by = "security_hub"
                 bypass_nxt_steps = True     
+                
     #############################
     # RAG-FLOW
     #############################
@@ -178,41 +176,33 @@ async def get_answer(history, security_ids,conversation_id):
 
         try:
             # detect language
-            logging.debug(f"[code_orchest] detecting language")
-            start_time = time.time()
-            function_result = await call_semantic_function(kernel, conversationPlugin["DetectLanguage"], arguments)
-            prompt_tokens += get_usage_tokens(function_result, 'prompt')
-            completion_tokens += get_usage_tokens(function_result, 'completion')            
-            detected_language = str(function_result)
-            arguments["language"] = detected_language
-            response_time = round(time.time() - start_time,2)
-            logging.info(f"[code_orchest] finished detecting language: {detected_language}. {response_time} seconds.")
+            with timed_step("detecting language"):
+                function_result = await call_semantic_function(kernel, conversationPlugin["DetectLanguage"], arguments)
+                p, c = get_token_counts(function_result)
+                prompt_tokens += p
+                completion_tokens += c
+                detected_language = str(function_result)
+                arguments["language"] = detected_language
 
             # conversation summary
-            logging.debug(f"[code_orchest] summarizing conversation")
-            start_time = time.time()
-            if arguments["history"] != '[]':
-                function_result = await call_semantic_function(kernel, conversationPlugin["ConversationSummary"], arguments)
-                prompt_tokens += get_usage_tokens(function_result, 'prompt')
-                completion_tokens += get_usage_tokens(function_result, 'completion')            
-                conversation_history_summary =  str(function_result)
-            else:
-                conversation_history_summary = ""
-                logging.info(f"[code_orchest] first time talking no need to summarize.")
-            arguments["conversation_summary"] = conversation_history_summary
-            response_time = round(time.time() - start_time,2)
-            logging.info(f"[code_orchest] finished summarizing conversation: {conversation_history_summary}. {response_time} seconds.")
+            with timed_step("summarizing conversation"):
+                if arguments["history"] != '[]':
+                    function_result = await call_semantic_function(kernel, conversationPlugin["ConversationSummary"], arguments)
+                    p, c = get_token_counts(function_result)
+                    prompt_tokens += p
+                    completion_tokens += c
+                    conversation_history_summary =  str(function_result)
+                else:
+                    conversation_history_summary = ""
+                    logging.info(f"[code_orchest] first time talking no need to summarize.")
+                arguments["conversation_summary"] = conversation_history_summary
 
             # triage (find intent and generate answer and search query when applicable)
-            logging.debug(f"[code_orchest] checking intent. ask: {ask}")
-            logging.info(f"[code_orchest] checking intent. ask: {ask}")
-            start_time = time.time()
-            triage_dict = await triage(kernel, conversationPlugin, arguments)
-            intents = triage_dict['intents']
-            prompt_tokens += triage_dict["prompt_tokens"]
-            completion_tokens += triage_dict["completion_tokens"]
-            response_time = round(time.time() - start_time,2)
-            logging.info(f"[code_orchest] finished checking intents: {intents}. {response_time} seconds.")
+            with timed_step(f"checking intent. ask: {ask}"):
+                triage_dict = await triage(kernel, conversationPlugin, arguments)
+                intents = triage_dict['intents']
+                prompt_tokens += triage_dict["prompt_tokens"]
+                completion_tokens += triage_dict["completion_tokens"]
 
             # Handle question answering intent
             if set(intents).intersection({"follow_up", "question_answering"}):         
@@ -248,20 +238,17 @@ async def get_answer(history, security_ids,conversation_id):
                     sources=bing_sources+search_sources
                 arguments["sources"] = sources
                 # Generate the answer augmented by the retrieval
-                logging.info(f"[code_orchest] generating bot answer. ask: {ask}")
-                start_time = time.time()                                                          
-                arguments["history"] = json.dumps(messages[:-1], ensure_ascii=False) # update context with full history
-                function_result = await call_semantic_function(kernel, conversationPlugin["Answer"], arguments)
-                answer =  str(function_result)
-                logging.info(f"[code_orchest] generating bot answer. answer: {answer}")
-                conversation_plugin_answer = answer
-                answer_generated_by = "conversation_plugin_answer"
-                prompt_tokens += get_usage_tokens(function_result, 'prompt')
-                completion_tokens += get_usage_tokens(function_result, 'completion')
-                prompt = str(function_result.metadata['messages'][0])
-                response_time =  round(time.time() - start_time,2)              
-                logging.info(f"[code_orchest] finished generating bot answer. {response_time} seconds. {answer[:100]}.")
-                #logging.info(f"[code_orchest] finished generating bot answer. {response_time} seconds. {answer}.")
+                with timed_step(f"generating bot answer. ask: {ask}"):
+                    arguments["history"] = json.dumps(messages[:-1], ensure_ascii=False) # update context with full history
+                    function_result = await call_semantic_function(kernel, conversationPlugin["Answer"], arguments)
+                    answer =  str(function_result)
+                    logging.info(f"[code_orchest] generating bot answer. answer: {answer}")
+                    conversation_plugin_answer = answer
+                    answer_generated_by = "conversation_plugin_answer"
+                    p, c = get_token_counts(function_result)
+                    prompt_tokens += p
+                    completion_tokens += c
+                    prompt = str(function_result.metadata['messages'][0])
 
             # Handle general intents
             elif set(intents).intersection({"about_bot", "off_topic"}):
@@ -300,86 +287,79 @@ async def get_answer(history, security_ids,conversation_id):
                     break
         except Exception as e:
             logging.error(f"[code_orchest] could not get blocked list. {e}")
-    # if GROUNDEDNESS_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
-    #         try:
-    #             logging.info(f"[code_orchest] checking if it is grounded. answer: {answer[:50]}")
-    #             groundness_time = time.time()            
-    #             arguments["answer"] = saxutils.escape(answer)                      
-    #             function_result = await call_semantic_function(kernel, conversationPlugin["IsGrounded"], arguments)
-    #             grounded =  str(function_result)
-    #             prompt_tokens += get_usage_tokens(function_result, 'prompt')
-    #             completion_tokens += get_usage_tokens(function_result, 'completion')            
-    #             logging.info(f"[code_orchest] is it grounded? {grounded}.")  
-    #             if grounded.lower() == 'no':
-    #                 logging.info(f"[code_orchest] ungrounded answer: {answer}")
-    #                 function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
-    #                 prompt_tokens += get_usage_tokens(function_result, 'prompt')
-    #                 completion_tokens += get_usage_tokens(function_result, 'completion')            
-    #                 answer =  str(function_result)
-    #                 answer_dict['gpt_groundedness'] = 1
-    #                 answer_generated_by = "gpt_groundedness_check"
-    #                 bypass_nxt_steps = True
-    #             else:
-    #                 answer_dict['gpt_groundedness'] = 5
-    #             response_time =  round(time.time() - groundness_time,2)
-    #             logging.info(f"[code_orchest] finished checking if it is grounded. {response_time} seconds.")
-    #         except Exception as e:
-    #             logging.error(f"[code_orchest] could not check answer is grounded. {e}")           
+            
+    if GROUNDEDNESS_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
+            try:
+                with timed_step(f"checking if it is grounded. answer: {answer[:50]}"):
+                    arguments["answer"] = saxutils.escape(answer)
+                    function_result = await call_semantic_function(kernel, conversationPlugin["IsGrounded"], arguments)
+                    grounded =  str(function_result)
+                    p, c = get_token_counts(function_result)
+                    prompt_tokens += p
+                    completion_tokens += c
+                    logging.info(f"[code_orchest] is it grounded? {grounded}.")
+                    if grounded.lower() == 'no':
+                        logging.info(f"[code_orchest] ungrounded answer: {answer}")
+                        function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
+                        p, c = get_token_counts(function_result)
+                        prompt_tokens += p
+                        completion_tokens += c
+                        answer =  str(function_result)
+                        answer_dict['gpt_groundedness'] = 1
+                        answer_generated_by = "gpt_groundedness_check"
+                        bypass_nxt_steps = True
+                    else:
+                        answer_dict['gpt_groundedness'] = 5
+            except Exception as e:
+                logging.error(f"[code_orchest] could not check answer is grounded. {e}")
 
     if RESPONSIBLE_AI_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
             try:
-                logging.info(f"[code_orchest] checking responsible AI (fairness). answer: {answer[:50]}")
-                start_time = time.time()            
-                arguments["answer"] = saxutils.escape(answer)
-                raiPlugin= await raiPluginTask
-                fairness_dict = await fairness(kernel, raiPlugin, arguments)
-                fair = fairness_dict['fair']
-                fairness_answer = fairness_dict['answer']
-                prompt_tokens += fairness_dict["prompt_tokens"]
-                completion_tokens += fairness_dict["completion_tokens"]
-                logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
-                if not fair:
-                    answer = fairness_answer
-                    answer_generated_by = "rai_plugin_fairness"
-                answer_dict['pass_rai_fairness_check'] = fair
-                response_time =  round(time.time() - start_time,2)
-                logging.info(f"[code_orchest] finished checking responsible AI (fairness). {response_time} seconds.")
+                with timed_step(f"checking responsible AI (fairness). answer: {answer[:50]}"):
+                    arguments["answer"] = saxutils.escape(answer)
+                    raiPlugin= await raiPluginTask
+                    fairness_dict = await fairness(kernel, raiPlugin, arguments)
+                    fair = fairness_dict['fair']
+                    fairness_answer = fairness_dict['answer']
+                    prompt_tokens += fairness_dict["prompt_tokens"]
+                    completion_tokens += fairness_dict["completion_tokens"]
+                    logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
+                    if not fair:
+                        answer = fairness_answer
+                        answer_generated_by = "rai_plugin_fairness"
+                    answer_dict['pass_rai_fairness_check'] = fair
             except Exception as e:
                 logging.error(f"[code_orchest] could not check responsible AI (fairness). {e}")
                 
     if SECURITY_HUB_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
             try:
-                logging.info(f"[code_orchest] checking answer with security hub. answer: {answer[:50]}")
-                start_time = time.time()
-                arguments["answer"] = saxutils.escape(answer)
-                securityPlugin = await securityPluginTask
-                security_check = await kernel.invoke(securityPlugin["AnswerSecurityCheck"], KernelArguments(question=ask, answer=answer, sources=sources,security_hub_key=security_hub_key))
-                check_results = security_check.value["results"]
-                check_details = security_check.value["details"]
-                # New checks based on the updated requirements
-                all_passed = True
-                for name, status in check_results.items():
-                    if status.lower() != "passed":
-                        if name!="groundedness":
-                            all_passed = False
-                            break
-                        elif check_details.get("groundedness", {}).get("ungroundedPercentage", 1) > float(os.environ.get("SECURITY_HUB_UNGROUNDED_PERCENTAGE_THRESHHOLD",0)):
-                            all_passed = False
-                            break
-                all_below_threshold = all(category["severity"] <= SECURITY_HUB_THRESHOLDS[index] for index,category in check_details.get("categoriesAnalysis", []))
-                any_blocklists_match = len(check_details.get("blocklistsMatch", [])) > 0
-                if not all_passed or not all_below_threshold or any_blocklists_match:
-                    logging.error(f"[code_orchest] failed security hub answer checks. Details: {check_details}.")
-                    function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
-                    answer = str(function_result)
-                    answer_dict['security_hub'] = 1
-                    answer_generated_by = "security_hub_answer_check"
-                    bypass_nxt_steps = True
-                else:
-                    answer_dict['security_hub'] = 5
-                
-                response_time = round(time.time() - start_time, 2)
-                logging.info(f"[code_orchest] finished answer security hub checks. {response_time} seconds.")
+                with timed_step(f"checking answer with security hub. answer: {answer[:50]}"):
+                    arguments["answer"] = saxutils.escape(answer)
+                    securityPlugin = await securityPluginTask
+                    security_check = await kernel.invoke(securityPlugin["AnswerSecurityCheck"], KernelArguments(question=ask, answer=answer, sources=sources,security_hub_key=security_hub_key))
+                    check_results = security_check.value["results"]
+                    check_details = security_check.value["details"]
+                    # New checks based on the updated requirements
+                    all_passed = True
+                    for name, status in check_results.items():
+                        if status.lower() != "passed":
+                            if name!="groundedness":
+                                all_passed = False
+                                break
+                            elif check_details.get("groundedness", {}).get("ungroundedPercentage", 1) > float(os.environ.get("SECURITY_HUB_UNGROUNDED_PERCENTAGE_THRESHHOLD",0)):
+                                all_passed = False
+                                break
+                    all_below_threshold = all(category["severity"] <= SECURITY_HUB_THRESHOLDS[index] for index,category in check_details.get("categoriesAnalysis", []))
+                    any_blocklists_match = len(check_details.get("blocklistsMatch", [])) > 0
+                    if not all_passed or not all_below_threshold or any_blocklists_match:
+                        logging.error(f"[code_orchest] failed security hub answer checks. Details: {check_details}.")
+                        function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
+                        answer = str(function_result)
+                        answer_dict['security_hub'] = 1
+                        answer_generated_by = "security_hub_answer_check"
+                        bypass_nxt_steps = True
+                    else:
+                        answer_dict['security_hub'] = 5
             except Exception as e:
                 logging.error(f"[code_orchest] could not execute answer security hub checks. {e}")
     answer_dict["user_ask"] = ask if not answer_generated_by == 'content_filters_check' else '<FILTERED BY MODEL>'

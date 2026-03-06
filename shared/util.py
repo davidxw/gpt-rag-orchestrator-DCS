@@ -6,6 +6,7 @@ import logging
 import os
 import tiktoken
 import time
+from contextlib import contextmanager
 import urllib.parse
 from azure.cosmos.aio import CosmosClient as AsyncCosmosClient
 from azure.keyvault.secrets.aio import SecretClient as AsyncSecretClient
@@ -339,6 +340,19 @@ def get_usage_tokens(function_result, token_type='total'):
     elif token_type == 'total':
         usage_tokens = sum(item['usage'].total_tokens for item in metadata if 'usage' in item)        
     return usage_tokens
+
+def get_token_counts(function_result):
+    """Extract prompt and completion token counts from a function result."""
+    return get_usage_tokens(function_result, 'prompt'), get_usage_tokens(function_result, 'completion')
+
+@contextmanager
+def timed_step(step_name):
+    """Context manager that logs and times a processing step."""
+    logging.info(f"[code_orchest] ### STARTED {step_name}")
+    start_time = time.time()
+    yield
+    response_time = round(time.time() - start_time, 2)
+    logging.info(f"[code_orchest] ### FINISHED {step_name}. {response_time} seconds.")
 
 ##########################################################
 # AOAI FUNCTIONS
