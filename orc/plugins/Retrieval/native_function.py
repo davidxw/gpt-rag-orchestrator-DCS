@@ -39,7 +39,7 @@ if AZURE_SEARCH_API_VERSION < '2023-10-01-Preview':  # query is using vectorQuer
     AZURE_SEARCH_API_VERSION = '2023-11-01'
 
 AZURE_SEARCH_TOP_K = os.environ.get("AZURE_SEARCH_TOP_K") or "8"
-AZURE_SEARCH_USE_SEMANTIC = os.environ.get("AZURE_SEARCH_USE_SEMANTIC") or "false"
+AZURE_SEARCH_USE_SEMANTIC = os.environ.get("AZURE_SEARCH_USE_SEMANTIC") or "true"
 AZURE_SEARCH_APPROACH = os.environ.get("AZURE_SEARCH_APPROACH") or "hybrid"
 AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH = os.environ.get("AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH") or "false"
 AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH = True if AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH == "true" else False
@@ -50,6 +50,13 @@ AZURE_SEARCH_CONTENT_COLUMNS = os.environ.get("AZURE_SEARCH_CONTENT_COLUMNS") or
 AZURE_SEARCH_FILENAME_COLUMN = os.environ.get("AZURE_SEARCH_FILENAME_COLUMN") or "filepath"
 AZURE_SEARCH_TITLE_COLUMN = os.environ.get("AZURE_SEARCH_TITLE_COLUMN") or "title"
 AZURE_SEARCH_URL_COLUMN = os.environ.get("AZURE_SEARCH_URL_COLUMN") or "url"
+# Min score when semantic ranking is ON (uses @search.rerankerScore, 0-4 scale)
+AZURE_SEARCH_MIN_RERANKER_SCORE = float(os.environ.get("AZURE_SEARCH_MIN_RERANKER_SCORE", "1.0"))
+# Min score when semantic ranking is OFF (uses @search.score, scale varies by search approach):
+#   - hybrid (RRF fusion): typically 0.01-0.05, try 0.01-0.03
+#   - vector (cosine similarity): typically 0.5-1.0, try 0.7-0.8
+#   - term (BM25): typically 1.0-20.0+, try 2.0-5.0
+AZURE_SEARCH_MIN_SEARCH_SCORE = float(os.environ.get("AZURE_SEARCH_MIN_SEARCH_SCORE", "0.0"))
 
 logging.info(f"[sk_retrieval] querying azure ai search. Azure Search Approach: {AZURE_SEARCH_APPROACH}")
 
@@ -151,9 +158,14 @@ class Retrieval:
                         "k": int(AZURE_SEARCH_TOP_K)
                     }]
 
-                if AZURE_SEARCH_USE_SEMANTIC == "true" and AZURE_SEARCH_APPROACH != VECTOR_SEARCH_APPROACH:
+                use_semantic = AZURE_SEARCH_USE_SEMANTIC == "true" and AZURE_SEARCH_APPROACH != VECTOR_SEARCH_APPROACH
+                if use_semantic:
                     body["queryType"] = "semantic"
                     body["semanticConfiguration"] = AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG
+
+                min_score = AZURE_SEARCH_MIN_RERANKER_SCORE if use_semantic else AZURE_SEARCH_MIN_SEARCH_SCORE
+                score_field = '@search.rerankerScore' if use_semantic else '@search.score'
+                logging.info(f"[sk_retrieval] using {'semantic reranker' if use_semantic else 'search'} score field: {score_field}, min threshold: {min_score}")
 
                 body["filter"] = search_filter
 
@@ -191,9 +203,18 @@ class Retrieval:
                                 logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
                             else:
                                 if json['value']:
-                                    logging.info(f"[sk_retrieval] {len(json['value'])} documents retrieved")                                    
-                                    for doc in json['value']:
-                                        search_results.append(doc['filepath'] + ": " + doc['content'].strip() + "\n")
+                                    total_retrieved = len(json['value'])
+                                    logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
+                                    for i, doc in enumerate(json['value']):
+                                        score = doc.get(score_field, 0)
+                                        if score >= min_score:
+                                            search_results.append(
+                                                f"[Source {i+1}] {doc.get('title', '')} ({doc['filepath']}):\n{doc['content'].strip()}\n"
+                                            )
+                                        else:
+                                            logging.info(f"[sk_retrieval] Dropped doc below threshold: {doc['filepath']} ({score_field}: {score}, threshold: {min_score})")
+                                    dropped = total_retrieved - len(search_results)
+                                    logging.info(f"[sk_retrieval] {len(search_results)}/{total_retrieved} documents passed relevance threshold ({dropped} dropped)")
                                 else:
                                     logging.info(f"[sk_retrieval] No documents retrieved")                                        
                     else:                
@@ -208,10 +229,18 @@ class Retrieval:
                                 logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
                             else:
                                 if json['value']:
-                                    logging.info(f"[sk_retrieval] {len(json['value'])} documents retrieved")
-                                    for doc in json['value']:
-                                        search_results.append(doc['filepath'] + ": " + doc['content'].strip() + "\n")
-                                        # logging.info(f"[sk_retrieval] Search results: {search_results}")
+                                    total_retrieved = len(json['value'])
+                                    logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
+                                    for i, doc in enumerate(json['value']):
+                                        score = doc.get(score_field, 0)
+                                        if score >= min_score:
+                                            search_results.append(
+                                                f"[Source {i+1}] {doc.get('title', '')} ({doc['filepath']}):\n{doc['content'].strip()}\n"
+                                            )
+                                        else:
+                                            logging.info(f"[sk_retrieval] Dropped doc below threshold: {doc['filepath']} ({score_field}: {score}, threshold: {min_score})")
+                                    dropped = total_retrieved - len(search_results)
+                                    logging.info(f"[sk_retrieval] {len(search_results)}/{total_retrieved} documents passed relevance threshold ({dropped} dropped)")
                                 else:
                                     logging.info(f"[sk_retrieval] No documents retrieved")
 
