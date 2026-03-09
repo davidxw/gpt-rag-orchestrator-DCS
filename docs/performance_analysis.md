@@ -209,13 +209,22 @@ The Triage prompt already instructs the model to "generate ANSWER and QUERY_STRI
 
 ---
 
-### 5. Cache credentials, secrets, and clients
+### 5. Cache credentials, secrets, and clients ✅ IMPLEMENTED
 
 **Impact: Low-Medium (~0.3-0.5s saving, compounds over calls) | Effort: Low**
 
 - **`ChainedTokenCredential`** is created fresh in `get_aoai_config()`, `get_secret()`, `VectorIndexRetrieval()`, and `orchestrator.py`. Each creation + token fetch incurs overhead. Cache at request or app scope.
 - **`get_secret()`** creates a new Key Vault client per call. Secrets like `apimSubscriptionKey` don't change — cache for the function app lifetime.
 - **Embedding client** creates a new synchronous `AzureOpenAI` client on every call. Reuse it.
+
+**Implementation details:**
+- Added `get_credential()` in `shared/util.py` — returns a shared `ChainedTokenCredential` instance (created once, reused for app lifetime).
+- Added `_secret_cache` dict in `shared/util.py` — `get_secret()` now caches returned values, skipping Key Vault calls on subsequent requests for the same secret.
+- Added `_embedding_client` cache in `Retrieval/native_function.py` — the `AzureOpenAI` embedding client is reused across calls instead of being created fresh each time.
+- Updated `get_aoai_config()`, `get_next_resource()`, `get_blocked_list()` in `shared/util.py` to use `get_credential()`.
+- Updated `orchestrator.py` to use `get_credential()` instead of creating a new `ChainedTokenCredential`.
+- Updated `VectorIndexRetrieval()` in `Retrieval/native_function.py` to use `get_credential()`.
+- Changes in `shared/util.py`, `orc/orchestrator.py`, and `orc/plugins/Retrieval/native_function.py`.
 
 ---
 

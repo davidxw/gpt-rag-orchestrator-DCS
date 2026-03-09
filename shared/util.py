@@ -23,6 +23,19 @@ logging.getLogger('azure').setLevel(logging.WARNING)
 LOGLEVEL = os.environ.get('LOGLEVEL', 'DEBUG').upper()
 logging.basicConfig(level=LOGLEVEL)
 
+# Cached credential (reused across all calls within the function app lifetime)
+_cached_credential = None
+
+def get_credential():
+    """Return a shared ChainedTokenCredential instance, creating it once."""
+    global _cached_credential
+    if _cached_credential is None:
+        _cached_credential = ChainedTokenCredential(ManagedIdentityCredential(), AzureCliCredential())
+    return _cached_credential
+
+# Secret cache (secrets don't change during app lifetime)
+_secret_cache = {}
+
 # Env variables
 AZURE_OPENAI_TEMPERATURE = os.environ.get("AZURE_OPENAI_TEMPERATURE") or "0.17"
 AZURE_OPENAI_TOP_P = os.environ.get("AZURE_OPENAI_TOP_P") or "0.27"
@@ -74,14 +87,15 @@ model_max_tokens = {
 ##########################################################
 
 async def get_secret(secretName):
+    if secretName in _secret_cache:
+        return _secret_cache[secretName]
     keyVaultName = os.environ["AZURE_KEY_VAULT_NAME"]
     KVUri = f"https://{keyVaultName}.vault.azure.net"
-    async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-        async with AsyncSecretClient(vault_url=KVUri, credential=credential) as client:
-            retrieved_secret = await client.get_secret(secretName)
-            value = retrieved_secret.value
-
-    # Consider logging the elapsed_time or including it in the return value if needed
+    credential = get_credential()
+    async with AsyncSecretClient(vault_url=KVUri, credential=credential) as client:
+        retrieved_secret = await client.get_secret(secretName)
+        value = retrieved_secret.value
+    _secret_cache[secretName] = value
     return value
 
 ##########################################################
@@ -445,23 +459,23 @@ async def get_aoai_config(model, deployment_override=None, resource_override=Non
             resource = resources[0]
         else:
             resource = await get_next_resource(model)
-        async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-            token = await credential.get_token("https://cognitiveservices.azure.com/.default")
+        credential = get_credential()
+        token = await credential.get_token("https://cognitiveservices.azure.com/.default")
 
-            if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o', 'gpt-4o-mini'):
-                deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
-            elif model == AZURE_OPENAI_EMBEDDING_MODEL:
-                deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
-            else:
-                raise Exception(f"Model {model} not supported. Check if you have the correct env variables set.")
-            result = {
-                "resource": resource,
-                "endpoint": f"https://{resource}.openai.azure.com",
-                "deployment": deployment,
-                "model": model,  # ex: 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o'
-                "api_version": os.environ.get("AZURE_OPENAI_API_VERSION") or "2024-03-01-preview",
-                "api_key": token.token
-            }
+        if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o', 'gpt-4o-mini'):
+            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
+        elif model == AZURE_OPENAI_EMBEDDING_MODEL:
+            deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        else:
+            raise Exception(f"Model {model} not supported. Check if you have the correct env variables set.")
+        result = {
+            "resource": resource,
+            "endpoint": f"https://{resource}.openai.azure.com",
+            "deployment": deployment,
+            "model": model,  # ex: 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o'
+            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION") or "2024-03-01-preview",
+            "api_key": token.token
+        }
 
     return result
 
@@ -474,31 +488,31 @@ async def get_next_resource(model):
         return resources[0]
     else:
         start_time = time.time()
-        async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-            async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
-                db = db_client.get_database_client(database=AZURE_DB_NAME)
-                container = db.get_container_client('models')
-                try:
-                    keyvalue = await container.read_item(item=model, partition_key=model)
-                    # check if there's an update in the resource list and update cache
-                    if set(keyvalue["resources"]) != set(resources):
-                        keyvalue["resources"] = resources
-                except Exception:
-                    logging.info(f"[util__module] get_next_resource: first time execution (keyvalue store with '{model}' id does not exist, creating a new one).")
-                    keyvalue = {
-                        "id": model,
-                        "resources": resources
-                    }
-                    keyvalue = await container.create_item(body=keyvalue)
-                resources = keyvalue["resources"]
+        credential = get_credential()
+        async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
+            db = db_client.get_database_client(database=AZURE_DB_NAME)
+            container = db.get_container_client('models')
+            try:
+                keyvalue = await container.read_item(item=model, partition_key=model)
+                # check if there's an update in the resource list and update cache
+                if set(keyvalue["resources"]) != set(resources):
+                    keyvalue["resources"] = resources
+            except Exception:
+                logging.info(f"[util__module] get_next_resource: first time execution (keyvalue store with '{model}' id does not exist, creating a new one).")
+                keyvalue = {
+                    "id": model,
+                    "resources": resources
+                }
+                keyvalue = await container.create_item(body=keyvalue)
+            resources = keyvalue["resources"]
 
-                # get the first resource and move it to the end of the list
-                resource = resources.pop(0)
-                resources.append(resource)
+            # get the first resource and move it to the end of the list
+            resource = resources.pop(0)
+            resources.append(resource)
 
-                # update cache
-                keyvalue["resources"] = resources
-                await container.replace_item(item=model, body=keyvalue)
+            # update cache
+            keyvalue["resources"] = resources
+            await container.replace_item(item=model, body=keyvalue)
 
         response_time = round(time.time() - start_time, 2)
         logging.info(f"[util__module] get_next_resource: model '{model}' resource {resource}. {response_time} seconds")
@@ -510,16 +524,16 @@ async def get_next_resource(model):
 
 async def get_blocked_list():
     blocked_list = []
-    async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-        async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
-            db = db_client.get_database_client(database=AZURE_DB_NAME)
-            container = db.get_container_client('guardrails')
-            try:
-                key_value = await container.read_item(item='blocked_list', partition_key='blocked_list')
-                blocked_list = key_value["blocked_words"]
-                blocked_list = [word.lower() for word in blocked_list]
-            except Exception as e:
-                logging.info(f"[util__module] get_blocked_list: no blocked words list (keyvalue store with 'blocked_list' id does not exist).")
+    credential = get_credential()
+    async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
+        db = db_client.get_database_client(database=AZURE_DB_NAME)
+        container = db.get_container_client('guardrails')
+        try:
+            key_value = await container.read_item(item='blocked_list', partition_key='blocked_list')
+            blocked_list = key_value["blocked_words"]
+            blocked_list = [word.lower() for word in blocked_list]
+        except Exception as e:
+            logging.info(f"[util__module] get_blocked_list: no blocked words list (keyvalue store with 'blocked_list' id does not exist).")
     return blocked_list
 
 async def extract_text_from_html(web,session):
