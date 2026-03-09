@@ -234,13 +234,13 @@ async def get_answer(history, security_ids,conversation_id):
 
                 # Short-circuit if no relevant sources were found
                 if not sources.strip():
-                    logging.info(f"[code_orchest] no relevant sources found, skipping answer generation.")
-                    function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
-                    answer = str(function_result)
-                    answer_generated_by = "no_sources_found"
-                    prompt_tokens += get_usage_tokens(function_result, 'prompt')
-                    completion_tokens += get_usage_tokens(function_result, 'completion')
-                    bypass_nxt_steps = True
+                    with timed_step(f"no relevant sources found, generating not-in-sources answer. ask: {ask}"):
+                        function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
+                        answer = str(function_result)
+                        answer_generated_by = "no_sources_found"
+                        prompt_tokens += get_usage_tokens(function_result, 'prompt')
+                        completion_tokens += get_usage_tokens(function_result, 'completion')
+                        bypass_nxt_steps = True
                 else:
                     # Generate the answer augmented by the retrieval
                     arguments["sources"] = sources

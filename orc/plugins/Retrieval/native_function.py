@@ -1,4 +1,4 @@
-from shared.util import get_secret, get_aoai_config, extract_text_from_html, get_possitive_int_or_default
+from shared.util import get_secret, get_aoai_config, extract_text_from_html, get_possitive_int_or_default, get_credential
 # from semantic_kernel.skill_definition import sk_function
 from openai import AzureOpenAI
 from semantic_kernel.functions import kernel_function
@@ -14,7 +14,6 @@ else:
     from typing_extensions import Annotated
 from azure.cognitiveservices.search.customsearch import CustomSearchClient
 from msrest.authentication import CognitiveServicesCredentials
-from azure.identity.aio import ManagedIdentityCredential, AzureCliCredential, ChainedTokenCredential
 import aiohttp
 import asyncio
 
@@ -82,24 +81,32 @@ APIM_ENABLED = os.environ.get('APIM_ENABLED', 'false').lower() == 'true'
 APIM_BING_CUSTOM_SEARCH_URL = os.environ.get('APIM_BING_CUSTOM_SEARCH_URL', "") + "/search?"
 APIM_AZURE_SEARCH_URL = os.environ.get('APIM_AZURE_SEARCH_URL', "")
 
+# Embedding client cache
+_embedding_client = None
+_embedding_config_cache = None
+
 @retry(wait=wait_random_exponential(min=2, max=60), stop=stop_after_attempt(6), reraise=True)
 # Function to generate embeddings for title and content fields, also used for query embeddings
 async def generate_embeddings(text,apim_key=None):
+    global _embedding_client, _embedding_config_cache
     embeddings_config = await get_aoai_config(AZURE_OPENAI_EMBEDDING_MODEL)
-    if APIM_ENABLED:
-        client = AzureOpenAI(
-        api_version=embeddings_config['api_version'],
-        azure_endpoint=embeddings_config['endpoint'],
-        api_key=apim_key
-    )
-    else:   
-        client = AzureOpenAI(
-            api_version=embeddings_config['api_version'],
-            azure_endpoint=embeddings_config['endpoint'],
-            azure_ad_token=embeddings_config['api_key'],
-        )
+    config_key = (embeddings_config['endpoint'], embeddings_config['deployment'])
+    if _embedding_client is None or _embedding_config_cache != config_key:
+        if APIM_ENABLED:
+            _embedding_client = AzureOpenAI(
+                api_version=embeddings_config['api_version'],
+                azure_endpoint=embeddings_config['endpoint'],
+                api_key=apim_key
+            )
+        else:
+            _embedding_client = AzureOpenAI(
+                api_version=embeddings_config['api_version'],
+                azure_endpoint=embeddings_config['endpoint'],
+                azure_ad_token=embeddings_config['api_key'],
+            )
+        _embedding_config_cache = config_key
 
-    embeddings = client.embeddings.create(input=[text], model=embeddings_config['deployment']).data[0].embedding
+    embeddings = _embedding_client.embeddings.create(input=[text], model=embeddings_config['deployment']).data[0].embedding
 
     return embeddings
 
@@ -153,87 +160,79 @@ class Retrieval:
                             f"or not metadata_security_id/any()"
                         )        
         try:
-            async with ChainedTokenCredential(
-                ManagedIdentityCredential(),
-                AzureCliCredential()
-            ) as credential:
-                start_time = time.time()
-                logging.info(f"[sk_retrieval] generating question embeddings. search query: {search_query}")
-                embeddings_query = await generate_embeddings(search_query,apim_key=apim_key)
-                response_time = round(time.time() - start_time, 2)
-                logging.info(f"[sk_retrieval] finished generating question embeddings. {response_time} seconds")
-                azureSearchKey =await credential.get_token("https://search.azure.com/.default")
-                azureSearchKey = azureSearchKey.token
-                logging.info(f"[sk_retrieval] querying azure ai search. search query: {search_query}")
-                # prepare body
-                body = {
-                    "select": "title, content, url, filepath, chunk_id",
-                    "top": AZURE_SEARCH_TOP_K
-                }
-                if AZURE_SEARCH_APPROACH == TERM_SEARCH_APPROACH:
-                    body["search"] = search_query
-                elif AZURE_SEARCH_APPROACH == VECTOR_SEARCH_APPROACH:
-                    body["vectorQueries"] = [{
-                        "kind": "vector",
-                        "vector": embeddings_query,
-                        "fields": "contentVector",
-                        "k": int(AZURE_SEARCH_TOP_K)
-                    }]
-                elif AZURE_SEARCH_APPROACH == HYBRID_SEARCH_APPROACH:
-                    body["search"] = search_query
-                    body["vectorQueries"] = [{
-                        "kind": "vector",
-                        "vector": embeddings_query,
-                        "fields": "contentVector",
-                        "k": int(AZURE_SEARCH_TOP_K)
-                    }]
+            credential = get_credential()
+            start_time = time.time()
+            logging.info(f"[sk_retrieval] generating question embeddings. search query: {search_query}")
+            embeddings_query = await generate_embeddings(search_query,apim_key=apim_key)
+            response_time = round(time.time() - start_time, 2)
+            logging.info(f"[sk_retrieval] finished generating question embeddings. {response_time} seconds")
+            azureSearchKey = await credential.get_token("https://search.azure.com/.default")
+            azureSearchKey = azureSearchKey.token
+            logging.info(f"[sk_retrieval] querying azure ai search. search query: {search_query}")
+            # prepare body
+            body = {
+                "select": "title, content, url, filepath, chunk_id",
+                "top": AZURE_SEARCH_TOP_K
+            }
+            if AZURE_SEARCH_APPROACH == TERM_SEARCH_APPROACH:
+                body["search"] = search_query
+            elif AZURE_SEARCH_APPROACH == VECTOR_SEARCH_APPROACH:
+                body["vectorQueries"] = [{
+                    "kind": "vector",
+                    "vector": embeddings_query,
+                    "fields": "contentVector",
+                    "k": int(AZURE_SEARCH_TOP_K)
+                }]
+            elif AZURE_SEARCH_APPROACH == HYBRID_SEARCH_APPROACH:
+                body["search"] = search_query
+                body["vectorQueries"] = [{
+                    "kind": "vector",
+                    "vector": embeddings_query,
+                    "fields": "contentVector",
+                    "k": int(AZURE_SEARCH_TOP_K)
+                }]
 
-                use_semantic = AZURE_SEARCH_USE_SEMANTIC == "true" and AZURE_SEARCH_APPROACH != VECTOR_SEARCH_APPROACH
-                if use_semantic and not AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG:
-                    logging.warning("[sk_retrieval] AZURE_SEARCH_USE_SEMANTIC is true but AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG is not set. Semantic search disabled until it is configured.")
-                    use_semantic = False
-                if use_semantic:
-                    body["queryType"] = "semantic"
-                    body["semanticConfiguration"] = AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG
+            use_semantic = AZURE_SEARCH_USE_SEMANTIC == "true" and AZURE_SEARCH_APPROACH != VECTOR_SEARCH_APPROACH
+            if use_semantic and not AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG:
+                logging.warning("[sk_retrieval] AZURE_SEARCH_USE_SEMANTIC is true but AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG is not set. Semantic search disabled until it is configured.")
+                use_semantic = False
+            if use_semantic:
+                body["queryType"] = "semantic"
+                body["semanticConfiguration"] = AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG
 
-                min_score = AZURE_SEARCH_MIN_RERANKER_SCORE if use_semantic else AZURE_SEARCH_MIN_SEARCH_SCORE
-                score_field = '@search.rerankerScore' if use_semantic else '@search.score'
-                logging.info(f"[sk_retrieval] using {'semantic reranker' if use_semantic else 'search'} score field: {score_field}, min threshold: {min_score}")
+            min_score = AZURE_SEARCH_MIN_RERANKER_SCORE if use_semantic else AZURE_SEARCH_MIN_SEARCH_SCORE
+            score_field = '@search.rerankerScore' if use_semantic else '@search.score'
+            logging.info(f"[sk_retrieval] using {'semantic reranker' if use_semantic else 'search'} score field: {score_field}, min threshold: {min_score}")
 
-                body["filter"] = search_filter
+            body["filter"] = search_filter
 
-                logging.debug(f"[ai_search] search filter: {search_filter}")
-                logging.debug(f"[ai_search] search request body keys: {list(body.keys())}")
+            logging.debug(f"[ai_search] search filter: {search_filter}")
+            logging.debug(f"[ai_search] search request body keys: {list(body.keys())}")
 
+            if APIM_ENABLED:
                 headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {azureSearchKey}'
-                }                    
-
-                if APIM_ENABLED:
-                    headers = {
                     'Content-Type': 'application/json',
                     'api-key': apim_key,
                     '$top': AZURE_SEARCH_TOP_K
                 }
-                    search_endpoint = f"{APIM_AZURE_SEARCH_URL}/docs?api-version={AZURE_SEARCH_API_VERSION}"
-                else:
-                    headers = {
+                search_endpoint = f"{APIM_AZURE_SEARCH_URL}/docs?api-version={AZURE_SEARCH_API_VERSION}"
+            else:
+                headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {azureSearchKey}'
                 }
-                    search_endpoint = f"https://{AZURE_SEARCH_SERVICE}.search.windows.net/indexes/{AZURE_SEARCH_INDEX}/docs/search?api-version={AZURE_SEARCH_API_VERSION}"
-                start_time = time.time()
-                async with aiohttp.ClientSession() as session:
-                    if APIM_ENABLED:
-                        async with session.get(search_endpoint, headers=headers, json=body) as response:
-                            error_on_search = await _process_search_response(response, search_results, score_field, min_score)
-                    else:
-                        async with session.post(search_endpoint, headers=headers, json=body) as response:
-                            error_on_search = await _process_search_response(response, search_results, score_field, min_score)
+                search_endpoint = f"https://{AZURE_SEARCH_SERVICE}.search.windows.net/indexes/{AZURE_SEARCH_INDEX}/docs/search?api-version={AZURE_SEARCH_API_VERSION}"
+            start_time = time.time()
+            async with aiohttp.ClientSession() as session:
+                if APIM_ENABLED:
+                    async with session.get(search_endpoint, headers=headers, json=body) as response:
+                        error_on_search = await _process_search_response(response, search_results, score_field, min_score)
+                else:
+                    async with session.post(search_endpoint, headers=headers, json=body) as response:
+                        error_on_search = await _process_search_response(response, search_results, score_field, min_score)
 
-                response_time = round(time.time() - start_time, 2)
-                logging.info(f"[sk_retrieval] finished querying azure ai search. {response_time} seconds")
+            response_time = round(time.time() - start_time, 2)
+            logging.info(f"[sk_retrieval] finished querying azure ai search. {response_time} seconds")
         except Exception as e:
             error_message = str(e)
             logging.error(f"[sk_retrieval] error when getting the answer {error_message}")
