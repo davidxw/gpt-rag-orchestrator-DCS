@@ -231,19 +231,30 @@ async def get_answer(history, security_ids,conversation_id):
                     sources=search_sources+bing_sources
                 else:
                     sources=bing_sources+search_sources
-                arguments["sources"] = sources
-                # Generate the answer augmented by the retrieval
-                with timed_step(f"generating bot answer. ask: {ask}"):
-                    arguments["history"] = json.dumps(messages[:-1], ensure_ascii=False) # update context with full history
-                    function_result = await call_semantic_function(kernel, conversationPlugin["Answer"], arguments)
-                    answer =  str(function_result)
-                    logging.info(f"[code_orchest] generating bot answer. answer: {answer}")
-                    conversation_plugin_answer = answer
-                    answer_generated_by = "conversation_plugin_answer"
-                    p, c = get_token_counts(function_result)
-                    prompt_tokens += p
-                    completion_tokens += c
-                    prompt = str(function_result.metadata['messages'][0])
+
+                # Short-circuit if no relevant sources were found
+                if not sources.strip():
+                    logging.info(f"[code_orchest] no relevant sources found, skipping answer generation.")
+                    function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
+                    answer = str(function_result)
+                    answer_generated_by = "no_sources_found"
+                    prompt_tokens += get_usage_tokens(function_result, 'prompt')
+                    completion_tokens += get_usage_tokens(function_result, 'completion')
+                    bypass_nxt_steps = True
+                else:
+                    # Generate the answer augmented by the retrieval
+                    arguments["sources"] = sources
+                    with timed_step(f"generating bot answer. ask: {ask}"):
+                        arguments["history"] = json.dumps(messages[:-1], ensure_ascii=False) # update context with full history
+                        function_result = await call_semantic_function(kernel, conversationPlugin["Answer"], arguments)
+                        answer =  str(function_result)
+                        logging.info(f"[code_orchest] generating bot answer. answer: {answer}")
+                        conversation_plugin_answer = answer
+                        answer_generated_by = "conversation_plugin_answer"
+                        p, c = get_token_counts(function_result)
+                        prompt_tokens += p
+                        completion_tokens += c
+                        prompt = str(function_result.metadata['messages'][0])
 
             # Handle general intents
             elif set(intents).intersection({"about_bot", "off_topic"}):

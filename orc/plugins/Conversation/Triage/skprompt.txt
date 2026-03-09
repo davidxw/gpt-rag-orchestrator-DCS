@@ -30,7 +30,7 @@ ANSWER and QUERY_STRING will be generated only when the following conditions are
 
 ALWAYS generate the ANSWER and QUERY_STRING in {{$language}} language.
 Generate the query_string combining what is in the ASK with the context in the CONVERSATION_HISTORY_SUMMARY.
-Query string is no longer than 10 words.
+Query string is no longer than 25 words. Include specific section numbers, clause references, and Act/Regulation names when present in the ASK.
 
 # Task Input:  
 "CONVERSATION_HISTORY_SUMMARY": "{{$conversation_summary}}"
