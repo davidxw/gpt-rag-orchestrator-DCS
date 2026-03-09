@@ -2,7 +2,7 @@
     "schema": 1,
     "description": "Fairness assessment of the bot's answer",
     "execution_settings": {
-      "default": {
+      "aoai_chat_completion": {
         "max_tokens": 300,
         "temperature": 0.0,
         "top_p": 0.0,

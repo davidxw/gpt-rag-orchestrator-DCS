@@ -56,6 +56,10 @@ $azureOpenAIChatModel = Get-EnvValue "AZURE_CHAT_GPT_MODEL_NAME" $null ""
 $azureOpenAIEmbeddingDeployment = Get-EnvValue "AZURE_EMBEDDINGS_DEPLOYMENT_NAME" $null "text-embedding"
 $orchestratorMessagesLanguage = Get-EnvValue "AZURE_ORCHESTRATOR_MESSAGES_LANGUAGE" $null "en"
 
+# Small model settings (optional)
+$azureOpenAISmallChatDeployment = Get-EnvValue "AZURE_CHAT_GPT_SMALL_DEPLOYMENT_NAME" $null ""
+$azureOpenAISmallChatModel = Get-EnvValue "AZURE_CHAT_GPT_SMALL_MODEL_NAME" $null ""
+
 # Try to extract Cosmos DB info from AZURE_DB_CONFIG JSON
 $azureDbId = ""
 $azureDbName = ""
@@ -105,6 +109,8 @@ $settings = [ordered]@{
         AZURE_OPENAI_EMBEDDING_APIVERSION = "2024-05-01-preview"
         AZURE_OPENAI_CHATGPT_MONITORING_DEPLOYMENT = "chat"
         AZURE_OPENAI_CHATGPT_LLM_MONITORING = "true"
+        AZURE_OPENAI_SMALL_CHATGPT_MODEL = $azureOpenAISmallChatModel
+        AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT = $azureOpenAISmallChatDeployment
         AZURE_OPENAI_STREAM = "false"
         AZURE_OPENAI_LOAD_BALANCING = "true"
 
@@ -167,4 +173,6 @@ Write-Host "AZURE_OPENAI_CHATGPT_DEPLOYMENT:   $azureOpenAIChatDeployment"
 Write-Host "AZURE_OPENAI_CHATGPT_MODEL:        $azureOpenAIChatModel"
 Write-Host "AZURE_OPENAI_EMBEDDING_DEPLOYMENT: $azureOpenAIEmbeddingDeployment"
 Write-Host "ORCHESTRATOR_MESSAGES_LANGUAGE:     $orchestratorMessagesLanguage"
+Write-Host "AZURE_OPENAI_SMALL_CHATGPT_MODEL:   $(if ($azureOpenAISmallChatModel) { $azureOpenAISmallChatModel } else { '(not set)' })"
+Write-Host "AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT: $(if ($azureOpenAISmallChatDeployment) { $azureOpenAISmallChatDeployment } else { '(not set)' })"
 Write-Host "-------------------------------"

@@ -6,6 +6,7 @@ import logging
 import os
 import tiktoken
 import time
+from contextlib import contextmanager
 import urllib.parse
 from azure.cosmos.aio import CosmosClient as AsyncCosmosClient
 from azure.keyvault.secrets.aio import SecretClient as AsyncSecretClient
@@ -21,6 +22,19 @@ import aiohttp
 logging.getLogger('azure').setLevel(logging.WARNING)
 LOGLEVEL = os.environ.get('LOGLEVEL', 'DEBUG').upper()
 logging.basicConfig(level=LOGLEVEL)
+
+# Cached credential (reused across all calls within the function app lifetime)
+_cached_credential = None
+
+def get_credential():
+    """Return a shared ChainedTokenCredential instance, creating it once."""
+    global _cached_credential
+    if _cached_credential is None:
+        _cached_credential = ChainedTokenCredential(ManagedIdentityCredential(), AzureCliCredential())
+    return _cached_credential
+
+# Secret cache (secrets don't change during app lifetime)
+_secret_cache = {}
 
 # Env variables
 AZURE_OPENAI_TEMPERATURE = os.environ.get("AZURE_OPENAI_TEMPERATURE") or "0.17"
@@ -44,12 +58,28 @@ SECURITY_HUB_CHECK = True if SECURITY_HUB_CHECK.lower() == "true" else False
 APIM_ENABLED = os.environ.get("APIM_ENABLED") or "false"
 APIM_ENABLED = True if APIM_ENABLED.lower() == "true" else False
 
+# Small model configuration (for lightweight calls)
+AZURE_OPENAI_SMALL_CHATGPT_MODEL = os.environ.get("AZURE_OPENAI_SMALL_CHATGPT_MODEL")
+AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT = os.environ.get("AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT")
+AZURE_OPENAI_SMALL_RESOURCE = os.environ.get("AZURE_OPENAI_SMALL_RESOURCE")
+SMALL_MODEL_CONFIGURED = bool(AZURE_OPENAI_SMALL_CHATGPT_MODEL)
+if not AZURE_OPENAI_SMALL_CHATGPT_MODEL:
+    AZURE_OPENAI_SMALL_CHATGPT_MODEL = AZURE_OPENAI_CHATGPT_MODEL
+    AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT = None
+    AZURE_OPENAI_SMALL_RESOURCE = None
+else:
+    if not AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT:
+        AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT = AZURE_OPENAI_SMALL_CHATGPT_MODEL
+    if not AZURE_OPENAI_SMALL_RESOURCE:
+        AZURE_OPENAI_SMALL_RESOURCE = os.environ.get("AZURE_OPENAI_RESOURCE")
+
 model_max_tokens = {
     'gpt-35-turbo': 4096,
     'gpt-35-turbo-16k': 16384,
     'gpt-4': 8192,
     'gpt-4-32k': 32768,
-    'gpt-4o': 8192 
+    'gpt-4o': 8192,
+    'gpt-4o-mini': 8192
 }
 
 ##########################################################
@@ -57,14 +87,15 @@ model_max_tokens = {
 ##########################################################
 
 async def get_secret(secretName):
+    if secretName in _secret_cache:
+        return _secret_cache[secretName]
     keyVaultName = os.environ["AZURE_KEY_VAULT_NAME"]
     KVUri = f"https://{keyVaultName}.vault.azure.net"
-    async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-        async with AsyncSecretClient(vault_url=KVUri, credential=credential) as client:
-            retrieved_secret = await client.get_secret(secretName)
-            value = retrieved_secret.value
-
-    # Consider logging the elapsed_time or including it in the return value if needed
+    credential = get_credential()
+    async with AsyncSecretClient(vault_url=KVUri, credential=credential) as client:
+        retrieved_secret = await client.get_secret(secretName)
+        value = retrieved_secret.value
+    _secret_cache[secretName] = value
     return value
 
 ##########################################################
@@ -145,16 +176,29 @@ def optmize_messages(chat_history_messages, model):
    
 @retry(wait=wait_random_exponential(min=20, max=60), stop=stop_after_attempt(6), reraise=True)
 async def call_semantic_function(kernel, function, arguments):
-    function_result = await kernel.invoke(function, arguments)
-    return function_result
+    try:
+        function_result = await kernel.invoke(function, arguments)
+        return function_result
+    except Exception as e:
+        # Walk the full exception chain to find the root cause
+        cause = e
+        depth = 0
+        while cause is not None:
+            logging.error(f"[util__module] call_semantic_function exception chain [{depth}]: {type(cause).__name__}: {cause}")
+            cause = cause.__cause__ or cause.__context__
+            depth += 1
+            if depth > 10:
+                break
+        raise
 
 @retry(wait=wait_random_exponential(min=2, max=60), stop=stop_after_attempt(6), reraise=True)
-async def chat_complete(messages, functions, params={}, function_call='auto',apim_key=None):
+async def chat_complete(messages, functions, params={}, function_call='auto', apim_key=None, model=None, deployment=None):
     """  Return assistant chat response based on user query. Assumes existing list of messages """
 
-    oai_config = await get_aoai_config(AZURE_OPENAI_CHATGPT_MODEL)
+    model = model or AZURE_OPENAI_CHATGPT_MODEL
+    oai_config = await get_aoai_config(model, deployment_override=deployment)
 
-    messages = optmize_messages(messages, AZURE_OPENAI_CHATGPT_MODEL)
+    messages = optmize_messages(messages, model)
 
     url = f"{oai_config['endpoint']}/openai/deployments/{oai_config['deployment']}/chat/completions?api-version={oai_config['api_version']}"
     if(APIM_ENABLED):
@@ -327,6 +371,39 @@ async def create_kernel(service_id='aoai_chat_completion',apim_key=None):
                 ad_token=chatgpt_config['api_key']
             )
         )
+
+    # Register small model service for lightweight calls
+    small_service_id = 'aoai_chat_completion_small'
+    if SMALL_MODEL_CONFIGURED:
+        logging.info(f"[util__module] Small model configured: {AZURE_OPENAI_SMALL_CHATGPT_MODEL} (deployment: {AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT})")
+    else:
+        logging.warning("[util__module] AZURE_OPENAI_SMALL_CHATGPT_MODEL not set. Falling back to regular model for lightweight calls.")
+    small_config = await get_aoai_config(
+        AZURE_OPENAI_SMALL_CHATGPT_MODEL,
+        deployment_override=AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT,
+        resource_override=AZURE_OPENAI_SMALL_RESOURCE
+    )
+    if APIM_ENABLED:
+        kernel.add_service(
+            AzureChatCompletion(
+                service_id=small_service_id,
+                deployment_name=small_config['deployment'],
+                endpoint=small_config['endpoint'],
+                api_version=small_config['api_version'],
+                api_key=apim_key
+            )
+        )
+    else:
+        kernel.add_service(
+            AzureChatCompletion(
+                service_id=small_service_id,
+                deployment_name=small_config['deployment'],
+                endpoint=small_config['endpoint'],
+                api_version=small_config['api_version'],
+                ad_token=small_config['api_key']
+            )
+        )
+
     return kernel
 
 def get_usage_tokens(function_result, token_type='total'):
@@ -340,6 +417,19 @@ def get_usage_tokens(function_result, token_type='total'):
         usage_tokens = sum(item['usage'].total_tokens for item in metadata if 'usage' in item)        
     return usage_tokens
 
+def get_token_counts(function_result):
+    """Extract prompt and completion token counts from a function result."""
+    return get_usage_tokens(function_result, 'prompt'), get_usage_tokens(function_result, 'completion')
+
+@contextmanager
+def timed_step(step_name):
+    """Context manager that logs and times a processing step."""
+    logging.info(f"[code_orchest] ### STARTED {step_name}")
+    start_time = time.time()
+    yield
+    response_time = round(time.time() - start_time, 2)
+    logging.info(f"[code_orchest] ### FINISHED {step_name}. {response_time} seconds.")
+
 ##########################################################
 # AOAI FUNCTIONS
 ##########################################################
@@ -349,10 +439,10 @@ def get_list_from_string(string):
     result = [item.strip() for item in result]
     return result
 
-async def get_aoai_config(model):
+async def get_aoai_config(model, deployment_override=None, resource_override=None):
     if APIM_ENABLED:
-        if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k','gpt-4o'):
-            deployment = os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
+        if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o', 'gpt-4o-mini'):
+            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
         elif model == AZURE_OPENAI_EMBEDDING_MODEL:
             deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
         else:
@@ -364,24 +454,28 @@ async def get_aoai_config(model):
             "api_version": os.environ.get("AZURE_OPENAI_API_VERSION") or "2024-03-01-preview",
         }
     else:
-        resource = await get_next_resource(model)
-        async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-            token = await credential.get_token("https://cognitiveservices.azure.com/.default")
+        if resource_override:
+            resources = get_list_from_string(resource_override)
+            resource = resources[0]
+        else:
+            resource = await get_next_resource(model)
+        credential = get_credential()
+        token = await credential.get_token("https://cognitiveservices.azure.com/.default")
 
-            if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k','gpt-4o'):
-                deployment = os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
-            elif model == AZURE_OPENAI_EMBEDDING_MODEL:
-                deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
-            else:
-                raise Exception(f"Model {model} not supported. Check if you have the correct env variables set.")
-            result = {
-                "resource": resource,
-                "endpoint": f"https://{resource}.openai.azure.com",
-                "deployment": deployment,
-                "model": model,  # ex: 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o'
-                "api_version": os.environ.get("AZURE_OPENAI_API_VERSION") or "2024-03-01-preview",
-                "api_key": token.token
-            }
+        if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o', 'gpt-4o-mini'):
+            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
+        elif model == AZURE_OPENAI_EMBEDDING_MODEL:
+            deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        else:
+            raise Exception(f"Model {model} not supported. Check if you have the correct env variables set.")
+        result = {
+            "resource": resource,
+            "endpoint": f"https://{resource}.openai.azure.com",
+            "deployment": deployment,
+            "model": model,  # ex: 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o'
+            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION") or "2024-03-01-preview",
+            "api_key": token.token
+        }
 
     return result
 
@@ -394,31 +488,31 @@ async def get_next_resource(model):
         return resources[0]
     else:
         start_time = time.time()
-        async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-            async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
-                db = db_client.get_database_client(database=AZURE_DB_NAME)
-                container = db.get_container_client('models')
-                try:
-                    keyvalue = await container.read_item(item=model, partition_key=model)
-                    # check if there's an update in the resource list and update cache
-                    if set(keyvalue["resources"]) != set(resources):
-                        keyvalue["resources"] = resources
-                except Exception:
-                    logging.info(f"[util__module] get_next_resource: first time execution (keyvalue store with '{model}' id does not exist, creating a new one).")
-                    keyvalue = {
-                        "id": model,
-                        "resources": resources
-                    }
-                    keyvalue = await container.create_item(body=keyvalue)
-                resources = keyvalue["resources"]
+        credential = get_credential()
+        async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
+            db = db_client.get_database_client(database=AZURE_DB_NAME)
+            container = db.get_container_client('models')
+            try:
+                keyvalue = await container.read_item(item=model, partition_key=model)
+                # check if there's an update in the resource list and update cache
+                if set(keyvalue["resources"]) != set(resources):
+                    keyvalue["resources"] = resources
+            except Exception:
+                logging.info(f"[util__module] get_next_resource: first time execution (keyvalue store with '{model}' id does not exist, creating a new one).")
+                keyvalue = {
+                    "id": model,
+                    "resources": resources
+                }
+                keyvalue = await container.create_item(body=keyvalue)
+            resources = keyvalue["resources"]
 
-                # get the first resource and move it to the end of the list
-                resource = resources.pop(0)
-                resources.append(resource)
+            # get the first resource and move it to the end of the list
+            resource = resources.pop(0)
+            resources.append(resource)
 
-                # update cache
-                keyvalue["resources"] = resources
-                await container.replace_item(item=model, body=keyvalue)
+            # update cache
+            keyvalue["resources"] = resources
+            await container.replace_item(item=model, body=keyvalue)
 
         response_time = round(time.time() - start_time, 2)
         logging.info(f"[util__module] get_next_resource: model '{model}' resource {resource}. {response_time} seconds")
@@ -430,16 +524,16 @@ async def get_next_resource(model):
 
 async def get_blocked_list():
     blocked_list = []
-    async with ChainedTokenCredential( ManagedIdentityCredential(), AzureCliCredential()) as credential:
-        async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
-            db = db_client.get_database_client(database=AZURE_DB_NAME)
-            container = db.get_container_client('guardrails')
-            try:
-                key_value = await container.read_item(item='blocked_list', partition_key='blocked_list')
-                blocked_list = key_value["blocked_words"]
-                blocked_list = [word.lower() for word in blocked_list]
-            except Exception as e:
-                logging.info(f"[util__module] get_blocked_list: no blocked words list (keyvalue store with 'blocked_list' id does not exist).")
+    credential = get_credential()
+    async with AsyncCosmosClient(AZURE_DB_URI, credential) as db_client:
+        db = db_client.get_database_client(database=AZURE_DB_NAME)
+        container = db.get_container_client('guardrails')
+        try:
+            key_value = await container.read_item(item='blocked_list', partition_key='blocked_list')
+            blocked_list = key_value["blocked_words"]
+            blocked_list = [word.lower() for word in blocked_list]
+        except Exception as e:
+            logging.info(f"[util__module] get_blocked_list: no blocked words list (keyvalue store with 'blocked_list' id does not exist).")
     return blocked_list
 
 async def extract_text_from_html(web,session):
