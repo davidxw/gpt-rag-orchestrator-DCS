@@ -4,7 +4,7 @@
 
 Our RAG orchestrator currently takes **~17–18 seconds** to process a question-answering request. Analysis of the pipeline shows that **7 Azure OpenAI calls** are made sequentially (including a recently re-enabled groundedness check), with answer generation alone consuming 10 seconds. We've identified 6 optimizations that, combined, could reduce response times to **~3.5–5 seconds** — a 3–4x improvement:
 
-1. **Use gpt-4o-mini** for 5 of 6 chat completion calls that perform trivial tasks (content filtering, language detection, intent classification, groundedness check, fairness check) — saving ~3.5s and ~95% cost on those calls.
+1. **Use gpt-4o-mini** for 4 of 5 chat completion calls that perform lightweight tasks (content filtering, intent classification, conversation summary, groundedness check) — saving ~3s and ~95% cost on those calls. The Fairness check remains on gpt-4o as it requires more nuance.
 2. **Parallelize independent LLM calls** that currently run sequentially — saving ~2s pre-retrieval, plus ~1s post-answer by running groundedness and fairness checks concurrently.
 3. **Reduce source document volume** sent to the answer generation prompt — saving ~3–5s on the most expensive step. Also reduces groundedness check time since it receives the same sources.
 4. **Merge language detection into the triage step** to eliminate a redundant LLM call — saving ~0.7s.
@@ -135,26 +135,25 @@ The following timings are from a representative question-answering request log:
 
 ### 1. Switch lightweight calls to gpt-4o-mini ✅ IMPLEMENTED
 
-**Impact: High (~3.5s saving) | Effort: Low-Medium | Status: Complete**
+**Impact: High (~3s saving) | Effort: Low-Medium | Status: Complete**
 
-5 of 6 chat completion calls use gpt-4o for trivial tasks. gpt-4o-mini is ~60% faster and ~95% cheaper while being equally capable for these:
+4 of 5 chat completion calls use gpt-4o for lightweight tasks. gpt-4o-mini is ~60% faster and ~95% cheaper while being equally capable for these:
 
 | Call | Task | Current | With mini |
 |---|---|---|---|
 | Content Filter | Send question, check for error (`max_tokens=1`) | 1.09s | ~0.5s |
-| Language Detection | Return a single word (2 completion tokens) | 0.77s | ~0.3s |
 | Triage | Classify intent from 5 options + short search query | 2.01s | ~1.0s |
+| Conversation Summary | Summarize conversation history | ~0.5s | ~0.3s |
 | Groundedness | Binary yes/no classification (1 token output) | ~1.0-1.5s | ~0.5-0.7s |
-| Fairness | Binary fair/not-fair classification (20 tokens) | 1.30s | ~0.6s |
 
-Only Answer Generation (10.18s, 14K tokens, complex synthesis with citations) should stay on gpt-4o.
+Answer Generation (10.18s, 14K tokens, complex synthesis with citations) and the Fairness Check (1.30s, nuanced bias/discrimination assessment) remain on gpt-4o.
 
 The groundedness check is an especially good candidate for gpt-4o-mini: despite having a large prompt (it receives all sources + the answer), it produces only a single word output ("yes" or "no"). The task is straightforward binary classification — mini models handle this reliably.
 
 **Implementation (completed):**
 - Added `AZURE_OPENAI_SMALL_CHATGPT_MODEL` and `AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT` environment variables (with optional `AZURE_OPENAI_SMALL_RESOURCE`). If not set, falls back to the regular model with a warning logged at request time.
 - A second `AzureChatCompletion` service is registered on the kernel with service ID `aoai_chat_completion_small` in `create_kernel()` (shared/util.py).
-- Plugin `config.json` files for DetectLanguage, Triage, IsGrounded, NotInSourcesAnswer, ConversationSummary, and Fairness updated to use `aoai_chat_completion_small` execution settings.
+- Plugin `config.json` files for DetectLanguage, Triage, IsGrounded, NotInSourcesAnswer, and ConversationSummary updated to use `aoai_chat_completion_small` execution settings. Fairness remains on `aoai_chat_completion` (full model) as the fairness assessment requires more nuance than a small model can provide.
 - Content Filter (`native_function.py`) updated to pass small model/deployment to `chat_complete()`.
 - `chat_complete()` and `get_aoai_config()` extended with optional model/deployment override parameters.
 - Settings generation scripts (`generate-local-settings.sh`, `generate-local-settings.ps1`) and `local.settings.json.template` updated.
