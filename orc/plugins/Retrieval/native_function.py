@@ -43,7 +43,7 @@ AZURE_SEARCH_USE_SEMANTIC = os.environ.get("AZURE_SEARCH_USE_SEMANTIC") or "true
 AZURE_SEARCH_APPROACH = os.environ.get("AZURE_SEARCH_APPROACH") or "hybrid"
 AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH = os.environ.get("AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH") or "false"
 AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH = True if AZURE_SEARCH_OYD_USE_SEMANTIC_SEARCH == "true" else False
-AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG = os.environ.get("AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG") or "my-semantic-config"
+AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG = os.environ.get("AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG") or ""
 AZURE_SEARCH_ENABLE_IN_DOMAIN = os.environ.get("AZURE_SEARCH_ENABLE_IN_DOMAIN") or "true"
 AZURE_SEARCH_ENABLE_IN_DOMAIN = True if AZURE_SEARCH_ENABLE_IN_DOMAIN == "true" else False
 AZURE_SEARCH_CONTENT_COLUMNS = os.environ.get("AZURE_SEARCH_CONTENT_COLUMNS") or "content"
@@ -103,6 +103,36 @@ async def generate_embeddings(text,apim_key=None):
 
     return embeddings
 
+
+async def _process_search_response(response, search_results, score_field, min_score):
+    """Process an Azure Search HTTP response: check for errors, filter by score, format sources."""
+    status_code = response.status
+    text = await response.text()
+    if status_code >= 400:
+        error_message = f'Status code: {status_code}.'
+        if text != "":
+            error_message += f" Error: {text}."
+        logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
+        return True  # error_on_search
+    json_body = await response.json()
+    if json_body['value']:
+        total_retrieved = len(json_body['value'])
+        logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
+        for i, doc in enumerate(json_body['value']):
+            score = doc.get(score_field, 0)
+            if score >= min_score:
+                search_results.append(
+                    f"[Source {len(search_results)+1}] {doc.get('title', '')} ({doc['filepath']}):\n{doc['content'].strip()}\n"
+                )
+            else:
+                logging.info(f"[sk_retrieval] Dropped doc below threshold: {doc['filepath']} ({score_field}: {score}, threshold: {min_score})")
+        dropped = total_retrieved - len(search_results)
+        logging.info(f"[sk_retrieval] {len(search_results)}/{total_retrieved} documents passed relevance threshold ({dropped} dropped)")
+    else:
+        logging.info(f"[sk_retrieval] No documents retrieved")
+    return False  # no error
+
+
 class Retrieval:
     @kernel_function(
         description="Search a knowledge base for sources to ground and give context to answer a user question. Return sources.",
@@ -159,6 +189,9 @@ class Retrieval:
                     }]
 
                 use_semantic = AZURE_SEARCH_USE_SEMANTIC == "true" and AZURE_SEARCH_APPROACH != VECTOR_SEARCH_APPROACH
+                if use_semantic and not AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG:
+                    logging.warning("[sk_retrieval] AZURE_SEARCH_USE_SEMANTIC is true but AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG is not set. Semantic search disabled until it is configured.")
+                    use_semantic = False
                 if use_semantic:
                     body["queryType"] = "semantic"
                     body["semanticConfiguration"] = AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG
@@ -194,56 +227,10 @@ class Retrieval:
                 async with aiohttp.ClientSession() as session:
                     if APIM_ENABLED:
                         async with session.get(search_endpoint, headers=headers, json=body) as response:
-                            status_code = response.status
-                            text=await response.text()
-                            if status_code >= 400:
-                                error_on_search = True
-                                error_message = f'Status code: {status_code}.'
-                                if text != "": error_message += f" Error: {text}."
-                                logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
-                            else:
-                                json=await response.json()
-                                if json['value']:
-                                    total_retrieved = len(json['value'])
-                                    logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
-                                    for i, doc in enumerate(json['value']):
-                                        score = doc.get(score_field, 0)
-                                        if score >= min_score:
-                                            search_results.append(
-                                                f"[Source {i+1}] {doc.get('title', '')} ({doc['filepath']}):\n{doc['content'].strip()}\n"
-                                            )
-                                        else:
-                                            logging.info(f"[sk_retrieval] Dropped doc below threshold: {doc['filepath']} ({score_field}: {score}, threshold: {min_score})")
-                                    dropped = total_retrieved - len(search_results)
-                                    logging.info(f"[sk_retrieval] {len(search_results)}/{total_retrieved} documents passed relevance threshold ({dropped} dropped)")
-                                else:
-                                    logging.info(f"[sk_retrieval] No documents retrieved")                                        
-                    else:                
+                            error_on_search = await _process_search_response(response, search_results, score_field, min_score)
+                    else:
                         async with session.post(search_endpoint, headers=headers, json=body) as response:
-                            status_code = response.status
-                            text=await response.text()
-                            if status_code >= 400:
-                                error_on_search = True
-                                error_message = f'Status code: {status_code}.'
-                                if text != "": error_message += f" Error: {text}."
-                                logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
-                            else:
-                                json=await response.json()
-                                if json['value']:
-                                    total_retrieved = len(json['value'])
-                                    logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
-                                    for i, doc in enumerate(json['value']):
-                                        score = doc.get(score_field, 0)
-                                        if score >= min_score:
-                                            search_results.append(
-                                                f"[Source {i+1}] {doc.get('title', '')} ({doc['filepath']}):\n{doc['content'].strip()}\n"
-                                            )
-                                        else:
-                                            logging.info(f"[sk_retrieval] Dropped doc below threshold: {doc['filepath']} ({score_field}: {score}, threshold: {min_score})")
-                                    dropped = total_retrieved - len(search_results)
-                                    logging.info(f"[sk_retrieval] {len(search_results)}/{total_retrieved} documents passed relevance threshold ({dropped} dropped)")
-                                else:
-                                    logging.info(f"[sk_retrieval] No documents retrieved")
+                            error_on_search = await _process_search_response(response, search_results, score_field, min_score)
 
                 response_time = round(time.time() - start_time, 2)
                 logging.info(f"[sk_retrieval] finished querying azure ai search. {response_time} seconds")
