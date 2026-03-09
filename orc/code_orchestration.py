@@ -248,7 +248,7 @@ async def get_answer(history, security_ids,conversation_id):
                     sources=bing_sources+search_sources
 
                 # Short-circuit if no relevant sources were found
-                if not sources.strip() or sources.strip() == "NO_SOURCES_FOUND":
+                if not sources.strip():
                     logging.info(f"[code_orchest] no relevant sources found, skipping answer generation.")
                     function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
                     answer = str(function_result)
