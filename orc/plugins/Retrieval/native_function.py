@@ -170,6 +170,7 @@ class Retrieval:
                 body["filter"] = search_filter
 
                 logging.debug(f"[ai_search] search filter: {search_filter}")
+                logging.debug(f"[ai_search] search request body keys: {list(body.keys())}")
 
                 headers = {
                     'Content-Type': 'application/json',
@@ -195,13 +196,13 @@ class Retrieval:
                         async with session.get(search_endpoint, headers=headers, json=body) as response:
                             status_code = response.status
                             text=await response.text()
-                            json=await response.json()
                             if status_code >= 400:
                                 error_on_search = True
                                 error_message = f'Status code: {status_code}.'
-                                if text != "": error_message += f" Error: {response.text}."
+                                if text != "": error_message += f" Error: {text}."
                                 logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
                             else:
+                                json=await response.json()
                                 if json['value']:
                                     total_retrieved = len(json['value'])
                                     logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
@@ -221,13 +222,13 @@ class Retrieval:
                         async with session.post(search_endpoint, headers=headers, json=body) as response:
                             status_code = response.status
                             text=await response.text()
-                            json=await response.json()    
                             if status_code >= 400:
                                 error_on_search = True
                                 error_message = f'Status code: {status_code}.'
-                                if text != "": error_message += f" Error: {response.text}."
+                                if text != "": error_message += f" Error: {text}."
                                 logging.error(f"[sk_retrieval] error {status_code} when searching documents. {error_message}")
                             else:
+                                json=await response.json()
                                 if json['value']:
                                     total_retrieved = len(json['value'])
                                     logging.info(f"[sk_retrieval] {total_retrieved} documents retrieved, applying min {score_field} threshold: {min_score}")
