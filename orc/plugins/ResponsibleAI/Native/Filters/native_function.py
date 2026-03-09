@@ -1,4 +1,4 @@
-from shared.util import chat_complete
+from shared.util import chat_complete, AZURE_OPENAI_SMALL_CHATGPT_MODEL, AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT
 # from semantic_kernel.skill_definition import sk_function
 from semantic_kernel.functions import kernel_function
 import logging
@@ -50,7 +50,7 @@ class Filters:
                 ]
             
             start_time = time.time()
-            response =  await chat_complete(messages, functions, params, 'none', apim_key=apim_key)
+            response =  await chat_complete(messages, functions, params, 'none', apim_key=apim_key, model=AZURE_OPENAI_SMALL_CHATGPT_MODEL, deployment=AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT)
             
             if 'error' in response:
                 validationPassed = False

@@ -24,6 +24,9 @@
     "AZURE_OPENAI_EMBEDDING_APIVERSION": "2024-05-01-preview",
     "AZURE_OPENAI_CHATGPT_MONITORING_DEPLOYMENT": "chat",
     "AZURE_OPENAI_CHATGPT_LLM_MONITORING": "true",        
+    "AZURE_OPENAI_SMALL_CHATGPT_MODEL": "[optional, example: gpt-4o-mini. Falls back to AZURE_OPENAI_CHATGPT_MODEL if not set]",
+    "AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT": "[optional, example: gpt-4o-mini. Falls back to AZURE_OPENAI_SMALL_CHATGPT_MODEL if not set]",
+    "AZURE_OPENAI_SMALL_RESOURCE": "[optional. Falls back to AZURE_OPENAI_RESOURCE if not set]",
     "AZURE_OPENAI_STREAM" : "false",
     "AZURE_OPENAI_LOAD_BALANCING": "true",
 

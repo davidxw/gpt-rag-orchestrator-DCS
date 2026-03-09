@@ -2,7 +2,7 @@
     "schema": 1,
     "description": "Given a long conversation transcript, summarize the conversation",
     "execution_settings": {
-      "default": {
+      "aoai_chat_completion_small": {
         "max_tokens": 1024,
         "temperature": 0.0,
         "top_p": 0.0,

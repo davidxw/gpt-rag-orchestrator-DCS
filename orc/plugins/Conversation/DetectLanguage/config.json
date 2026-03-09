@@ -2,7 +2,7 @@
     "schema": 1,
     "description": "Detect user ask language",
     "execution_settings": {
-      "default": {
+      "aoai_chat_completion_small": {
         "max_tokens": 1000,
         "temperature": 0.0,
         "top_p": 0.0,

@@ -133,9 +133,9 @@ The following timings are from a representative question-answering request log:
 
 ## Optimization Recommendations
 
-### 1. Switch lightweight calls to gpt-4o-mini
+### 1. Switch lightweight calls to gpt-4o-mini ✅ IMPLEMENTED
 
-**Impact: High (~3.5s saving) | Effort: Low-Medium**
+**Impact: High (~3.5s saving) | Effort: Low-Medium | Status: Complete**
 
 5 of 6 chat completion calls use gpt-4o for trivial tasks. gpt-4o-mini is ~60% faster and ~95% cheaper while being equally capable for these:
 
@@ -151,7 +151,13 @@ Only Answer Generation (10.18s, 14K tokens, complex synthesis with citations) sh
 
 The groundedness check is an especially good candidate for gpt-4o-mini: despite having a large prompt (it receives all sources + the answer), it produces only a single word output ("yes" or "no"). The task is straightforward binary classification — mini models handle this reliably.
 
-**Implementation:** Register a second `AzureChatCompletion` service on the kernel with a `"mini"` service ID in `create_kernel()` (shared/util.py), then update the `execution_settings` in each plugin's `config.json` (DetectLanguage, Triage, IsGrounded, Fairness) to reference it. The Content Filter uses `chat_complete()` directly in `native_function.py` and needs its own config change.
+**Implementation (completed):**
+- Added `AZURE_OPENAI_SMALL_CHATGPT_MODEL` and `AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT` environment variables (with optional `AZURE_OPENAI_SMALL_RESOURCE`). If not set, falls back to the regular model with a warning logged at request time.
+- A second `AzureChatCompletion` service is registered on the kernel with service ID `aoai_chat_completion_small` in `create_kernel()` (shared/util.py).
+- Plugin `config.json` files for DetectLanguage, Triage, IsGrounded, NotInSourcesAnswer, ConversationSummary, and Fairness updated to use `aoai_chat_completion_small` execution settings.
+- Content Filter (`native_function.py`) updated to pass small model/deployment to `chat_complete()`.
+- `chat_complete()` and `get_aoai_config()` extended with optional model/deployment override parameters.
+- Settings generation scripts (`generate-local-settings.sh`, `generate-local-settings.ps1`) and `local.settings.json.template` updated.
 
 ---
 

@@ -214,7 +214,7 @@ async def get_answer(history, security_ids,conversation_id):
                 retrievalPlugin= await retrievalPluginTask
                 if(SEARCH_RETRIEVAL):
                     search_function_result = await kernel.invoke(retrievalPlugin["VectorIndexRetrieval"], KernelArguments(input=search_query,apim_key=apim_key,security_ids=security_ids))
-                    logging.info(f"[code_orchest] Search result : {search_function_result}")
+                    #logging.info(f"[code_orchest] Search result : {search_function_result}")
                     formatted_sources = search_function_result.value[:100].replace('\n', ' ')
                     escaped_sources = escape_xml_characters(search_function_result.value)
                     search_sources=escaped_sources
