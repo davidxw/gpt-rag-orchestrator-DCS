@@ -161,15 +161,20 @@ The groundedness check is an especially good candidate for gpt-4o-mini: despite 
 
 ---
 
-### 2. Parallelize independent pre-retrieval calls
+### 2. Parallelize independent LLM calls ✅ IMPLEMENTED
 
 **Impact: High (~3s saving) | Effort: Low**
 
 There are two parallelization opportunities:
 
-**Pre-retrieval:** Content Filter (1.09s), Language Detection (0.77s), and Triage (2.01s) all operate on the raw user question with no interdependencies. They run sequentially in `code_orchestration.py`. Running them concurrently with `asyncio.gather()` reduces their combined ~3.8s to ~2.0s (the slowest one). On follow-up turns, Triage depends on `conversation_summary`, but Content Filter and Language Detection can always be parallelized with each other and with the Summary step.
+**Pre-retrieval:** Content Filter runs as an early guardrail that can short-circuit the entire flow, so it must complete before any downstream work. Of the remaining pre-retrieval steps, Language Detection (0.77s) and Conversation Summary (~0.5s) are independent of each other, while Triage (2.01s) depends on `conversation_summary`. Running Language Detection and Conversation Summary concurrently via `asyncio.gather()` removes their overlap, so Triage can start sooner.
 
 **Post-answer:** The Groundedness Check (~1.0-1.5s) and Fairness Check (1.30s) both operate on the generated answer and are independent of each other. They currently run sequentially. Running them concurrently with `asyncio.gather()` reduces their combined ~2.3-2.8s to ~1.3s (the slowest one), saving ~1s.
+
+**Implementation details:**
+- **Pre-retrieval:** Language Detection has been merged into Triage (see optimization #4), so pre-retrieval parallelization is no longer applicable. The flow is now: ConversationSummary → Triage.
+- **Post-answer:** When both GROUNDEDNESS_CHECK and RESPONSIBLE_AI_CHECK are enabled, IsGrounded and Fairness checks run concurrently via `asyncio.gather()`. After both complete, groundedness result is processed first — if ungrounded, `bypass_nxt_steps` is set and the fairness result is discarded. If grounded, the fairness result is applied. When only one check is enabled, it runs sequentially as before.
+- Changes in `code_orchestration.py`.
 
 ---
 
@@ -188,11 +193,19 @@ Halving the source tokens could reduce this step from ~10s to ~5-7s. Requires te
 
 ---
 
-### 4. Merge Language Detection into Triage
+### 4. Merge Language Detection into Triage ✅ IMPLEMENTED
 
 **Impact: Medium (~0.7s saving) | Effort: Low**
 
 The Triage prompt already instructs the model to "generate ANSWER and QUERY_STRING in the same language as the ASK" and outputs a `language` field in its JSON response. The separate DetectLanguage call (0.77s, 130 tokens) is redundant. Extracting the language from the Triage response eliminates one LLM round-trip entirely — reducing 6 calls to 5.
+
+**Implementation details:**
+- The Triage wrapper (`wrapper.py`) now extracts the `language` field from the Triage JSON response.
+- The DetectLanguage LLM call has been removed from the orchestration flow.
+- `arguments["language"]` is set to `"the same language as the ASK"` as a default before Triage runs (so `{{$language}}` in the prompt has a sensible value), then overridden with the language detected by Triage.
+- The pre-retrieval flow is now: ConversationSummary → Triage (which includes language detection).
+- Dead code (`triage_language` variable) removed.
+- Changes in `code_orchestration.py` and `Triage/wrapper.py`.
 
 ---
 

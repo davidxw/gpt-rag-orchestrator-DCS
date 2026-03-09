@@ -75,7 +75,6 @@ async def get_answer(history, security_ids,conversation_id):
     # conversation metadata
     conversation_plugin_answer = ""
     conversation_history_summary = ''
-    triage_language = ''
     answer_generated_by = "none"
     prompt_tokens = 0
     completion_tokens = 0
@@ -175,34 +174,30 @@ async def get_answer(history, security_ids,conversation_id):
     if not bypass_nxt_steps:
 
         try:
-            # detect language
-            with timed_step("detecting language"):
-                function_result = await call_semantic_function(kernel, conversationPlugin["DetectLanguage"], arguments)
-                p, c = get_token_counts(function_result)
-                prompt_tokens += p
-                completion_tokens += c
-                detected_language = str(function_result)
-                arguments["language"] = detected_language
-
-            # conversation summary
-            with timed_step("summarizing conversation"):
-                if arguments["history"] != '[]':
-                    function_result = await call_semantic_function(kernel, conversationPlugin["ConversationSummary"], arguments)
-                    p, c = get_token_counts(function_result)
+            # summarize conversation history
+            if arguments["history"] != '[]':
+                with timed_step("summarizing conversation"):
+                    summary_result = await call_semantic_function(kernel, conversationPlugin["ConversationSummary"], arguments)
+                    p, c = get_token_counts(summary_result)
                     prompt_tokens += p
                     completion_tokens += c
-                    conversation_history_summary =  str(function_result)
-                else:
-                    conversation_history_summary = ""
-                    logging.info(f"[code_orchest] first time talking no need to summarize.")
-                arguments["conversation_summary"] = conversation_history_summary
+                    conversation_history_summary = str(summary_result)
+            else:
+                logging.info(f"[code_orchest] first time talking no need to summarize.")
+                conversation_history_summary = ""
+            arguments["conversation_summary"] = conversation_history_summary
 
-            # triage (find intent and generate answer and search query when applicable)
+            # triage: detect intent, generate answer/search query, and detect language
+            arguments["language"] = "the same language as the ASK"
             with timed_step(f"checking intent. ask: {ask}"):
                 triage_dict = await triage(kernel, conversationPlugin, arguments)
                 intents = triage_dict['intents']
                 prompt_tokens += triage_dict["prompt_tokens"]
                 completion_tokens += triage_dict["completion_tokens"]
+                detected_language = triage_dict.get('language', '')
+                if detected_language:
+                    arguments["language"] = detected_language
+                    logging.info(f"[code_orchest] language detected by triage: {detected_language}")
 
             # Handle question answering intent
             if set(intents).intersection({"follow_up", "question_answering"}):         
@@ -288,7 +283,71 @@ async def get_answer(history, security_ids,conversation_id):
         except Exception as e:
             logging.error(f"[code_orchest] could not get blocked list. {e}")
             
-    if GROUNDEDNESS_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
+    run_groundedness = GROUNDEDNESS_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps
+    run_fairness = RESPONSIBLE_AI_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps
+
+    if run_groundedness and run_fairness:
+        # Run groundedness and fairness checks in parallel
+        with timed_step(f"checking groundedness + fairness. answer: {answer[:50]}"):
+            arguments["answer"] = saxutils.escape(answer)
+            raiPlugin = await raiPluginTask
+
+            async def _check_groundedness():
+                fr = await call_semantic_function(kernel, conversationPlugin["IsGrounded"], arguments)
+                return fr
+
+            async def _check_fairness():
+                fd = await fairness(kernel, raiPlugin, arguments)
+                return fd
+
+            try:
+                groundedness_result, fairness_result = await asyncio.gather(
+                    _check_groundedness(), _check_fairness()
+                )
+            except Exception as e:
+                logging.error(f"[code_orchest] error in parallel groundedness/fairness checks. {e}")
+                groundedness_result = None
+                fairness_result = None
+
+            # Process groundedness first (takes priority)
+            if groundedness_result is not None:
+                try:
+                    grounded = str(groundedness_result)
+                    p, c = get_token_counts(groundedness_result)
+                    prompt_tokens += p
+                    completion_tokens += c
+                    logging.info(f"[code_orchest] is it grounded? {grounded}.")
+                    if grounded.lower() == 'no':
+                        logging.info(f"[code_orchest] ungrounded answer: {answer}")
+                        function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
+                        p, c = get_token_counts(function_result)
+                        prompt_tokens += p
+                        completion_tokens += c
+                        answer = str(function_result)
+                        answer_dict['gpt_groundedness'] = 1
+                        answer_generated_by = "gpt_groundedness_check"
+                        bypass_nxt_steps = True
+                    else:
+                        answer_dict['gpt_groundedness'] = 5
+                except Exception as e:
+                    logging.error(f"[code_orchest] could not check answer is grounded. {e}")
+
+            # Process fairness only if groundedness passed
+            if fairness_result is not None and not bypass_nxt_steps:
+                try:
+                    fair = fairness_result['fair']
+                    fairness_answer = fairness_result['answer']
+                    prompt_tokens += fairness_result["prompt_tokens"]
+                    completion_tokens += fairness_result["completion_tokens"]
+                    logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
+                    if not fair:
+                        answer = fairness_answer
+                        answer_generated_by = "rai_plugin_fairness"
+                    answer_dict['pass_rai_fairness_check'] = fair
+                except Exception as e:
+                    logging.error(f"[code_orchest] could not check responsible AI (fairness). {e}")
+    else:
+        if run_groundedness:
             try:
                 with timed_step(f"checking if it is grounded. answer: {answer[:50]}"):
                     arguments["answer"] = saxutils.escape(answer)
@@ -313,7 +372,7 @@ async def get_answer(history, security_ids,conversation_id):
             except Exception as e:
                 logging.error(f"[code_orchest] could not check answer is grounded. {e}")
 
-    if RESPONSIBLE_AI_CHECK and set(intents).intersection({"follow_up", "question_answering"}) and not bypass_nxt_steps:
+        if run_fairness and not bypass_nxt_steps:
             try:
                 with timed_step(f"checking responsible AI (fairness). answer: {answer[:50]}"):
                     arguments["answer"] = saxutils.escape(answer)
