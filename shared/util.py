@@ -441,12 +441,10 @@ def get_list_from_string(string):
 
 async def get_aoai_config(model, deployment_override=None, resource_override=None):
     if APIM_ENABLED:
-        if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o', 'gpt-4o-mini'):
-            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
-        elif model == AZURE_OPENAI_EMBEDDING_MODEL:
+        if model == AZURE_OPENAI_EMBEDDING_MODEL:
             deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
         else:
-            raise Exception(f"Model {model} not supported. Check if you have the correct env variables set.")
+            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
         result = {
             "endpoint": os.environ.get("APIM_AZURE_OPENAI_ENDPOINT"),
             "deployment": deployment,
@@ -462,12 +460,10 @@ async def get_aoai_config(model, deployment_override=None, resource_override=Non
         credential = get_credential()
         token = await credential.get_token("https://cognitiveservices.azure.com/.default")
 
-        if model in ('gpt-35-turbo', 'gpt-35-turbo-16k', 'gpt-4', 'gpt-4-32k', 'gpt-4o', 'gpt-4o-mini'):
-            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
-        elif model == AZURE_OPENAI_EMBEDDING_MODEL:
+        if model == AZURE_OPENAI_EMBEDDING_MODEL:
             deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
         else:
-            raise Exception(f"Model {model} not supported. Check if you have the correct env variables set.")
+            deployment = deployment_override or os.environ.get("AZURE_OPENAI_CHATGPT_DEPLOYMENT") or "gpt-4o"
         result = {
             "resource": resource,
             "endpoint": f"https://{resource}.openai.azure.com",
