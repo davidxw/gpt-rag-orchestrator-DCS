@@ -1,6 +1,7 @@
 # imports
 import json
 import logging
+import re
 from shared.util import call_semantic_function, get_usage_tokens
 
 async def triage(kernel, conversation_plugin, arguments):
@@ -30,8 +31,10 @@ async def triage(kernel, conversation_plugin, arguments):
     function_result =  await call_semantic_function(kernel, conversation_plugin["Triage"], arguments)
     message_content = str(function_result)
     try:
-        response = message_content.strip("`json\n`")
-        response_json = json.loads(response)
+        match = re.search(r'\{.*\}', message_content, re.DOTALL)
+        if not match:
+            raise json.JSONDecodeError("No JSON object found", message_content, 0)
+        response_json = json.loads(match.group())
     except json.JSONDecodeError:
         logging.error(f"[code_orchest] error when executing RAG flow (Triage). Invalid json: {str(function_result)}")
         raise Exception(f"Triage was not successful due to a JSON error. Invalid json: {str(function_result)}")
