@@ -227,9 +227,19 @@ The Triage prompt already instructs the model to "generate ANSWER and QUERY_STRI
 
 ---
 
-### 6. Semantic Caching of Requests and Responses
+### 6. Semantic Caching of Requests and Responses — IMPLEMENTED
 
 **Impact: Very High on cache hits (skip ~14.5s) | Effort: Medium**
+
+> **Implementation notes:**
+> - Feature flag: `SEMANTIC_CACHE_ENABLED` (default `false`)
+> - Cache module: `shared/semantic_cache.py` — uses Cosmos DB container `semantic_cache` with DiskANN vector indexing
+> - Cache lookup runs after question guardrails, before the RAG pipeline (first-turn only)
+> - Cache save runs after all answer guardrails pass (only for `conversation_plugin_answer`)
+> - Security-isolated: cache key includes `security_ids` as partition key
+> - TTL-based invalidation: `SEMANTIC_CACHE_TTL_SECONDS` (default 24h)
+> - Similarity threshold: `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` (default 0.95)
+> - Pre-computed question embedding is reused if cache misses (avoids duplicate embedding call for retrieval)
 
 Instead of exact-match caching, generate an embedding of the incoming question and compare it against embeddings of previously-asked questions. If the cosine similarity exceeds a threshold (e.g., 0.95), return the cached answer instead of running the full pipeline. "What are tenant rights?" and "What rights do tenants have?" would produce a cache hit.
 
@@ -274,30 +284,154 @@ Cosmos DB is the lowest-friction option since it's already in use and supports v
 - **Event-driven**: Clear the cache when the search index is updated. More complex but accurate.
 - **Hybrid**: TTL of a few hours, with manual invalidation on known document updates.
 
-#### Implementation Sketch
+#### Cosmos DB Setup — `semantic_cache` Container
 
-```python
-# After guardrails, before language detection:
+The cache uses a dedicated Cosmos DB container with vector search (DiskANN indexing). This must be created in the same Cosmos DB account already used by the orchestrator (`AZURE_DB_ID` / `AZURE_DB_NAME`).
 
-# 1. Generate embedding for the question (reuse for retrieval later)
-question_embedding = await generate_embeddings(ask, apim_key=apim_key)
+##### 1. Create the container
 
-# 2. Check semantic cache (first-turn only)
-if arguments["history"] == '[]':
-    cached = await check_semantic_cache(question_embedding, security_ids)
-    if cached and cached['similarity'] >= CACHE_SIMILARITY_THRESHOLD:
-        logging.info(f"[code_orchest] cache hit (similarity: {cached['similarity']})")
-        answer = cached['answer']
-        answer_generated_by = "semantic_cache"
-        sources = cached['sources']
-        bypass_nxt_steps = True
+| Setting | Value |
+|---|---|
+| Container name | `semantic_cache` |
+| Partition key | `/security_ids` |
+| Default TTL | **On** (per-item TTL — each cached document sets its own `ttl` field) |
 
-# ... rest of pipeline runs on cache miss ...
+> **Important:** The partition key is `/security_ids` to ensure cache lookups are scoped to the same security context that produced the original answer. Two users with different document access asking the same question will have separate cache entries.
 
-# After answer generation, save to cache:
-if answer_generated_by == "conversation_plugin_answer":
-    await save_to_semantic_cache(question_embedding, ask, answer, sources, security_ids)
+##### 2. Container-level vector embedding policy
+
+This tells Cosmos DB how to interpret the embedding field for vector operations. Set this as the **Container Vector Policy** when creating the container (or update it afterwards via ARM/Bicep/CLI):
+
+```json
+{
+  "vectorEmbeddings": [
+    {
+      "path": "/question_embedding",
+      "dataType": "float32",
+      "distanceFunction": "cosine",
+      "dimensions": 1536
+    }
+  ]
+}
 ```
+
+> **Note on dimensions:** The `text-embedding` deployment typically uses `text-embedding-ada-002` or `text-embedding-3-small`, both with 1536 dimensions. If you're using `text-embedding-3-large` (3072 dimensions), update this value accordingly. You can verify by checking the length of an embedding returned by `generate_embeddings()`.
+
+##### 3. Indexing policy with vector index
+
+The indexing policy must exclude the raw embedding array from the standard index (performance/cost) and define a DiskANN vector index on the embedding path:
+
+```json
+{
+  "indexingMode": "consistent",
+  "automatic": true,
+  "includedPaths": [
+    { "path": "/*" }
+  ],
+  "excludedPaths": [
+    { "path": "/question_embedding/*" },
+    { "path": "/\"_etag\"/?" }
+  ],
+  "vectorIndexes": [
+    {
+      "path": "/question_embedding",
+      "type": "diskANN"
+    }
+  ]
+}
+```
+
+**Why DiskANN?** It's Cosmos DB's recommended vector index type for production workloads — it provides approximate nearest neighbor search with good recall and low latency, without requiring all vectors to fit in memory (unlike `flat` index which is exact but only suitable for small datasets).
+
+##### 4. TTL configuration
+
+TTL is handled at two levels:
+- **Container level:** Enable Default TTL ("On") so Cosmos DB respects per-item `ttl` fields
+- **Document level:** Each cached document includes a `ttl` field (in seconds), controlled by the `SEMANTIC_CACHE_TTL_SECONDS` environment variable (default: 86400 = 24 hours). Cosmos DB automatically deletes expired documents in the background.
+
+##### 5. Azure CLI example
+
+```bash
+# Create the container with partition key and TTL enabled
+az cosmosdb sql container create \
+  --account-name <AZURE_DB_ID> \
+  --database-name <AZURE_DB_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --name semantic_cache \
+  --partition-key-path /security_ids \
+  --default-ttl -1 \
+  --idx-policy '{
+    "indexingMode": "consistent",
+    "automatic": true,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [
+      {"path": "/question_embedding/*"},
+      {"path": "/\"_etag\"/?"}
+    ],
+    "vectorIndexes": [{"path": "/question_embedding", "type": "diskANN"}]
+  }' \
+  --vector-policy '{
+    "vectorEmbeddings": [{
+      "path": "/question_embedding",
+      "dataType": "float32",
+      "distanceFunction": "cosine",
+      "dimensions": 1536
+    }]
+  }'
+```
+
+> `--default-ttl -1` enables TTL on the container without setting a container-wide default — each document's `ttl` field is used individually.
+
+##### 6. Cached document structure
+
+Each document stored in the `semantic_cache` container has this shape:
+
+```json
+{
+  "id": "<sha256-hash-of-question+security_ids, truncated to 32 chars>",
+  "security_ids": "<partition key — security context string>",
+  "question": "What are tenant rights under the Residential Tenancies Act?",
+  "question_embedding": [0.0123, -0.0456, ...],
+  "answer": "According to section 15 of the Act...",
+  "sources": "<escaped XML source documents>",
+  "search_query": "tenant rights Residential Tenancies Act",
+  "detected_language": "English",
+  "created_at": "2026-03-09T10:30:00+00:00",
+  "ttl": 86400
+}
+```
+
+The `id` is deterministic (SHA-256 of `question|security_ids`), so re-asking the exact same question upserts rather than duplicating.
+
+##### 7. RBAC / access control
+
+The orchestrator's managed identity (or local dev credential via `ChainedTokenCredential`) needs the same Cosmos DB RBAC role it already has for the `conversations`, `models`, and `guardrails` containers. No additional role assignments are needed — the existing **Cosmos DB Built-in Data Contributor** role covers read/write on all containers in the database.
+
+##### 8. Application settings
+
+Add these to your Azure Functions App Settings (and `local.settings.json` for local dev):
+
+| Setting | Default | Description |
+|---|---|---|
+| `SEMANTIC_CACHE_ENABLED` | `false` | Feature flag — set to `true` to enable caching |
+| `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | `0.95` | Minimum cosine similarity score for a cache hit (0.0–1.0). Lower = more permissive matching. Start at 0.95 and tune based on logs. |
+| `SEMANTIC_CACHE_TTL_SECONDS` | `86400` | Time-to-live for cached entries in seconds. Default 24 hours. Cosmos DB auto-deletes expired items. |
+
+#### Cache query mechanism
+
+The cache lookup uses Cosmos DB's `VectorDistance` function in a SQL query:
+
+```sql
+SELECT TOP 1
+    c.question, c.answer, c.sources, c.search_query,
+    c.detected_language, c.security_ids, c.created_at,
+    VectorDistance(c.question_embedding, @embedding) AS similarity
+FROM c
+WHERE c.security_ids = @security_ids
+ORDER BY VectorDistance(c.question_embedding, @embedding)
+```
+
+This runs within the partition (scoped by `security_ids`), so DiskANN only searches vectors belonging to the same security context. The result's `similarity` score is compared against `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` — if it meets or exceeds the threshold, the cached answer is returned.
 
 #### Interaction with Other Optimizations
 
@@ -329,7 +463,7 @@ Semantic caching complements all other optimizations. The other 5 improve cache-
 | 3 | Reduce source docs (fewer/smaller chunks) | ~3-5s | Medium | Same |
 | 4 | Merge Language Detection into Triage | ~0.7s | Low | 7 → 6 |
 | 5 | Cache credentials, secrets, clients | ~0.3-0.5s | Low | Same |
-| 6 | Semantic caching | ~16s on hit | Medium | 7 → 0 on hit |
+| 6 | Semantic caching — **IMPLEMENTED** | ~16s on hit | Medium | 7 → 0 on hit |
 | | **Total potential saving** | **~10-12s (miss) / ~16s (hit)** | | **7 → 6 (miss) / 0 (hit)** |
 
 ### Projected Response Times

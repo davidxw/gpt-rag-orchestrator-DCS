@@ -11,6 +11,8 @@ from semantic_kernel.functions import KernelPlugin
 from shared.util import call_semantic_function, get_chat_history_as_messages, get_message, get_last_messages,get_possitive_int_or_default
 from shared.util import get_blocked_list, create_kernel, get_usage_tokens, escape_xml_characters,get_secret
 from shared.util import timed_step, get_token_counts
+from shared.semantic_cache import check_semantic_cache, save_to_semantic_cache
+from orc.plugins.Retrieval.native_function import generate_embeddings
 import asyncio
 import xml.sax.saxutils as saxutils
 
@@ -50,6 +52,8 @@ RETRIEVAL_PRIORITY = os.environ.get("RETRIEVAL_PRIORITY") or "search"
 SEVERITY_THRESHOLD = os.environ.get("SEVERITY_THRESHOLD") or 3
 APIM_ENABLED = os.environ.get("APIM_ENABLED") or "false"
 APIM_ENABLED = True if APIM_ENABLED.lower() == "true" else False
+SEMANTIC_CACHE_ENABLED = os.environ.get("SEMANTIC_CACHE_ENABLED") or "false"
+SEMANTIC_CACHE_ENABLED = True if SEMANTIC_CACHE_ENABLED.lower() == "true" else False
 if SECURITY_HUB_CHECK:
     SECURITY_HUB_THRESHOLDS=[get_possitive_int_or_default(os.environ.get("SECURITY_HUB_HATE_THRESHHOLD"), 0),get_possitive_int_or_default(os.environ.get("SECURITY_HUB_SELFHARM_THRESHHOLD"), 0),get_possitive_int_or_default(os.environ.get("SECURITY_HUB_SEXUAL_THRESHHOLD"), 0),get_possitive_int_or_default(os.environ.get("SECURITY_HUB_VIOLENCE_THRESHHOLD"), 0)]
 
@@ -78,6 +82,8 @@ async def get_answer(history, security_ids,conversation_id):
     answer_generated_by = "none"
     prompt_tokens = 0
     completion_tokens = 0
+    question_embedding = None
+    cache_hit = False
     apim_key=None
     if APIM_ENABLED:
         apim_key = await get_secret("apimSubscriptionKey")
@@ -133,6 +139,31 @@ async def get_answer(history, security_ids,conversation_id):
             logging.error(f"[code_orchest] could not get blocked list. {e}")
     response_time =  round(time.time() - init_time,2)
     logging.info(f"[code_orchest] finished content filter and blocklist check. {response_time} seconds.")
+
+    #############################
+    # SEMANTIC CACHE LOOKUP
+    #############################
+    if SEMANTIC_CACHE_ENABLED and not bypass_nxt_steps:
+        is_first_turn = len(messages) <= 1
+        if is_first_turn:
+            try:
+                with timed_step("semantic cache lookup"):
+                    question_embedding = await generate_embeddings(ask, apim_key=apim_key)
+                    cached = await check_semantic_cache(question_embedding, security_ids)
+                    if cached:
+                        answer = cached['answer']
+                        sources = cached['sources']
+                        search_query = cached.get('search_query', '')
+                        detected_language = cached.get('detected_language', '')
+                        answer_generated_by = "semantic_cache"
+                        cache_hit = True
+                        bypass_nxt_steps = True
+                        logging.info(f"[code_orchest] semantic cache hit (similarity: {cached['similarity']:.4f})")
+            except Exception as e:
+                logging.error(f"[code_orchest] semantic cache lookup failed, continuing without cache. {e}")
+        else:
+            logging.info(f"[code_orchest] semantic cache skipped (follow-up question with history)")
+
     conversationPlugin= await conversationPluginTask
 
     if SECURITY_HUB_CHECK and not bypass_nxt_steps:
@@ -432,6 +463,29 @@ async def get_answer(history, security_ids,conversation_id):
                         answer_dict['security_hub'] = 5
             except Exception as e:
                 logging.error(f"[code_orchest] could not execute answer security hub checks. {e}")
+
+    #############################
+    # SEMANTIC CACHE SAVE
+    #############################
+    if SEMANTIC_CACHE_ENABLED and answer_generated_by == "conversation_plugin_answer" and not cache_hit:
+        is_first_turn = len(messages) <= 1
+        if is_first_turn:
+            try:
+                # Ensure we have the embedding (generated during cache lookup, or generate now)
+                if question_embedding is None:
+                    question_embedding = await generate_embeddings(ask, apim_key=apim_key)
+                await save_to_semantic_cache(
+                    question=ask,
+                    question_embedding=question_embedding,
+                    answer=answer,
+                    sources=sources,
+                    search_query=search_query,
+                    detected_language=detected_language,
+                    security_ids=security_ids,
+                )
+            except Exception as e:
+                logging.error(f"[code_orchest] semantic cache save failed, continuing without caching. {e}")
+
     answer_dict["user_ask"] = ask if not answer_generated_by == 'content_filters_check' else '<FILTERED BY MODEL>'
     answer_dict["answer"] = answer
     answer_dict["search_query"] = search_query
