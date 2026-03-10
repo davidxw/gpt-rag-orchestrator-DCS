@@ -227,9 +227,19 @@ The Triage prompt already instructs the model to "generate ANSWER and QUERY_STRI
 
 ---
 
-### 6. Semantic Caching of Requests and Responses
+### 6. Semantic Caching of Requests and Responses — IMPLEMENTED
 
 **Impact: Very High on cache hits (skip ~14.5s) | Effort: Medium**
+
+> **Implementation notes:**
+> - Feature flag: `SEMANTIC_CACHE_ENABLED` (default `false`)
+> - Cache module: `shared/semantic_cache.py` — uses Cosmos DB container `semantic_cache` with DiskANN vector indexing
+> - Cache lookup runs after question guardrails, before the RAG pipeline (first-turn only)
+> - Cache save runs after all answer guardrails pass (only for `conversation_plugin_answer`)
+> - Security-isolated: cache key includes `security_ids` as partition key
+> - TTL-based invalidation: `SEMANTIC_CACHE_TTL_SECONDS` (default 24h)
+> - Similarity threshold: `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` (default 0.95)
+> - Pre-computed question embedding is reused if cache misses (avoids duplicate embedding call for retrieval)
 
 Instead of exact-match caching, generate an embedding of the incoming question and compare it against embeddings of previously-asked questions. If the cosine similarity exceeds a threshold (e.g., 0.95), return the cached answer instead of running the full pipeline. "What are tenant rights?" and "What rights do tenants have?" would produce a cache hit.
 
@@ -274,30 +284,154 @@ Cosmos DB is the lowest-friction option since it's already in use and supports v
 - **Event-driven**: Clear the cache when the search index is updated. More complex but accurate.
 - **Hybrid**: TTL of a few hours, with manual invalidation on known document updates.
 
-#### Implementation Sketch
+#### Cosmos DB Setup — `semantic_cache` Container
 
-```python
-# After guardrails, before language detection:
+The cache uses a dedicated Cosmos DB container with vector search (DiskANN indexing). This must be created in the same Cosmos DB account already used by the orchestrator (`AZURE_DB_ID` / `AZURE_DB_NAME`).
 
-# 1. Generate embedding for the question (reuse for retrieval later)
-question_embedding = await generate_embeddings(ask, apim_key=apim_key)
+##### 1. Create the container
 
-# 2. Check semantic cache (first-turn only)
-if arguments["history"] == '[]':
-    cached = await check_semantic_cache(question_embedding, security_ids)
-    if cached and cached['similarity'] >= CACHE_SIMILARITY_THRESHOLD:
-        logging.info(f"[code_orchest] cache hit (similarity: {cached['similarity']})")
-        answer = cached['answer']
-        answer_generated_by = "semantic_cache"
-        sources = cached['sources']
-        bypass_nxt_steps = True
+| Setting | Value |
+|---|---|
+| Container name | `semantic_cache` |
+| Partition key | `/security_ids` |
+| Default TTL | **On** (per-item TTL — each cached document sets its own `ttl` field) |
 
-# ... rest of pipeline runs on cache miss ...
+> **Important:** The partition key is `/security_ids` to ensure cache lookups are scoped to the same security context that produced the original answer. Two users with different document access asking the same question will have separate cache entries.
 
-# After answer generation, save to cache:
-if answer_generated_by == "conversation_plugin_answer":
-    await save_to_semantic_cache(question_embedding, ask, answer, sources, security_ids)
+##### 2. Container-level vector embedding policy
+
+This tells Cosmos DB how to interpret the embedding field for vector operations. Set this as the **Container Vector Policy** when creating the container (or update it afterwards via ARM/Bicep/CLI):
+
+```json
+{
+  "vectorEmbeddings": [
+    {
+      "path": "/question_embedding",
+      "dataType": "float32",
+      "distanceFunction": "cosine",
+      "dimensions": 1536
+    }
+  ]
+}
 ```
+
+> **Note on dimensions:** The `text-embedding` deployment typically uses `text-embedding-ada-002` or `text-embedding-3-small`, both with 1536 dimensions. If you're using `text-embedding-3-large` (3072 dimensions), update this value accordingly. You can verify by checking the length of an embedding returned by `generate_embeddings()`.
+
+##### 3. Indexing policy with vector index
+
+The indexing policy must exclude the raw embedding array from the standard index (performance/cost) and define a DiskANN vector index on the embedding path:
+
+```json
+{
+  "indexingMode": "consistent",
+  "automatic": true,
+  "includedPaths": [
+    { "path": "/*" }
+  ],
+  "excludedPaths": [
+    { "path": "/question_embedding/*" },
+    { "path": "/\"_etag\"/?" }
+  ],
+  "vectorIndexes": [
+    {
+      "path": "/question_embedding",
+      "type": "diskANN"
+    }
+  ]
+}
+```
+
+**Why DiskANN?** It's Cosmos DB's recommended vector index type for production workloads — it provides approximate nearest neighbor search with good recall and low latency, without requiring all vectors to fit in memory (unlike `flat` index which is exact but only suitable for small datasets).
+
+##### 4. TTL configuration
+
+TTL is handled at two levels:
+- **Container level:** Enable Default TTL ("On") so Cosmos DB respects per-item `ttl` fields
+- **Document level:** Each cached document includes a `ttl` field (in seconds), controlled by the `SEMANTIC_CACHE_TTL_SECONDS` environment variable (default: 86400 = 24 hours). Cosmos DB automatically deletes expired documents in the background.
+
+##### 5. Azure CLI example
+
+```bash
+# Create the container with partition key and TTL enabled
+az cosmosdb sql container create \
+  --account-name <AZURE_DB_ID> \
+  --database-name <AZURE_DB_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --name semantic_cache \
+  --partition-key-path /security_ids \
+  --default-ttl -1 \
+  --idx-policy '{
+    "indexingMode": "consistent",
+    "automatic": true,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [
+      {"path": "/question_embedding/*"},
+      {"path": "/\"_etag\"/?"}
+    ],
+    "vectorIndexes": [{"path": "/question_embedding", "type": "diskANN"}]
+  }' \
+  --vector-policy '{
+    "vectorEmbeddings": [{
+      "path": "/question_embedding",
+      "dataType": "float32",
+      "distanceFunction": "cosine",
+      "dimensions": 1536
+    }]
+  }'
+```
+
+> `--default-ttl -1` enables TTL on the container without setting a container-wide default — each document's `ttl` field is used individually.
+
+##### 6. Cached document structure
+
+Each document stored in the `semantic_cache` container has this shape:
+
+```json
+{
+  "id": "<sha256-hash-of-question+security_ids, truncated to 32 chars>",
+  "security_ids": "<partition key — security context string>",
+  "question": "What are tenant rights under the Residential Tenancies Act?",
+  "question_embedding": [0.0123, -0.0456, ...],
+  "answer": "According to section 15 of the Act...",
+  "sources": "<escaped XML source documents>",
+  "search_query": "tenant rights Residential Tenancies Act",
+  "detected_language": "English",
+  "created_at": "2026-03-09T10:30:00+00:00",
+  "ttl": 86400
+}
+```
+
+The `id` is deterministic (SHA-256 of `question|security_ids`), so re-asking the exact same question upserts rather than duplicating.
+
+##### 7. RBAC / access control
+
+The orchestrator's managed identity (or local dev credential via `ChainedTokenCredential`) needs the same Cosmos DB RBAC role it already has for the `conversations`, `models`, and `guardrails` containers. No additional role assignments are needed — the existing **Cosmos DB Built-in Data Contributor** role covers read/write on all containers in the database.
+
+##### 8. Application settings
+
+Add these to your Azure Functions App Settings (and `local.settings.json` for local dev):
+
+| Setting | Default | Description |
+|---|---|---|
+| `SEMANTIC_CACHE_ENABLED` | `false` | Feature flag — set to `true` to enable caching |
+| `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | `0.95` | Minimum cosine similarity score for a cache hit (0.0–1.0). Lower = more permissive matching. Start at 0.95 and tune based on logs. |
+| `SEMANTIC_CACHE_TTL_SECONDS` | `86400` | Time-to-live for cached entries in seconds. Default 24 hours. Cosmos DB auto-deletes expired items. |
+
+#### Cache query mechanism
+
+The cache lookup uses Cosmos DB's `VectorDistance` function in a SQL query:
+
+```sql
+SELECT TOP 1
+    c.question, c.answer, c.sources, c.search_query,
+    c.detected_language, c.security_ids, c.created_at,
+    VectorDistance(c.question_embedding, @embedding) AS similarity
+FROM c
+WHERE c.security_ids = @security_ids
+ORDER BY VectorDistance(c.question_embedding, @embedding)
+```
+
+This runs within the partition (scoped by `security_ids`), so DiskANN only searches vectors belonging to the same security context. The result's `similarity` score is compared against `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` — if it meets or exceeds the threshold, the cached answer is returned.
 
 #### Interaction with Other Optimizations
 
@@ -329,7 +463,7 @@ Semantic caching complements all other optimizations. The other 5 improve cache-
 | 3 | Reduce source docs (fewer/smaller chunks) | ~3-5s | Medium | Same |
 | 4 | Merge Language Detection into Triage | ~0.7s | Low | 7 → 6 |
 | 5 | Cache credentials, secrets, clients | ~0.3-0.5s | Low | Same |
-| 6 | Semantic caching | ~16s on hit | Medium | 7 → 0 on hit |
+| 6 | Semantic caching — **IMPLEMENTED** | ~16s on hit | Medium | 7 → 0 on hit |
 | | **Total potential saving** | **~10-12s (miss) / ~16s (hit)** | | **7 → 6 (miss) / 0 (hit)** |
 
 ### Projected Response Times
@@ -345,3 +479,133 @@ Semantic caching complements all other optimizations. The other 5 improve cache-
 1. **Phase 1 (Low effort):** Items 2, 4, 5 — parallelize calls (including groundedness + fairness in parallel), merge language detection, cache credentials
 2. **Phase 2 (Low-Medium effort):** Item 1 — deploy gpt-4o-mini and configure plugin routing (including IsGrounded and NotInSourcesAnswer)
 3. **Phase 3 (Medium effort):** Items 3, 6 — reduce source volume (with quality testing, also benefits groundedness check prompt size) and implement semantic caching
+
+---
+
+## Updated Pipeline
+
+This section reflects the orchestrator flow after implementing optimizations 1, 2, 4, and 5, plus retrieval relevance improvements (score filtering, semantic ranking defaults, empty-sources short-circuit, structured source formatting). It is a standalone reference for how the current codebase works.
+
+### Current Pipeline Overview
+
+Each question-answering request flows through 14 steps:
+
+```
+User Question
+  │
+  ├─ 1.  Load/Create Conversation (Cosmos DB)
+  ├─ 2.  Initialize Kernel + Load Plugins
+  ├─ 3.  Content Filter Check (gpt-4o-mini) ──► blocked? → stop
+  ├─ 4.  Blocked List Check ────► blocked? → stop
+  ├─ 5.  Security Hub Check ───► (optional) blocked? → stop
+  ├─ 6.  Summarize Conversation History (gpt-4o-mini, skipped on first turn)
+  ├─ 7.  Triage: Intent + Query + Language (gpt-4o-mini)
+  │       ├─ greeting/about_bot/off_topic → direct answer → skip to 11
+  │       └─ question_answering/follow_up → continue
+  ├─ 8.  Retrieval (Azure AI Search + optional Bing)
+  │       ├─ Generate embedding (cached client)
+  │       ├─ Query Azure AI Search (hybrid/vector/term + optional semantic reranker)
+  │       ├─ Score filtering (min threshold by score type)
+  │       └─ No sources? → NotInSourcesAnswer (gpt-4o-mini) → skip to 11
+  ├─ 9.  Answer Generation (gpt-4o)
+  ├─ 10. Blocked List Check (Answer)
+  ├─ 11. Groundedness + Fairness Checks (parallel, gpt-4o-mini / gpt-4o)
+  │       ├─ Groundedness ──► ungrounded? → replace answer
+  │       └─ Fairness ──────► unfair? → replace answer (only if grounded)
+  ├─ 12. Security Hub Check (Answer, optional)
+  ├─ 13. Audit (optional)
+  └─ 14. Save to Cosmos DB & Return Answer
+```
+
+### Step Details
+
+**1. Conversation Setup**
+Load or create the conversation context from Cosmos DB. `orchestrator.py` generates a `conversation_id` (UUID) if none is provided, then connects to Cosmos DB using a cached `ChainedTokenCredential` (via `get_credential()`) to retrieve the existing conversation (with its history) or create a new one. The user's question is appended to the history. Security IDs are derived from the `client_principal` (user ID + group names).
+
+**2. Kernel & Plugin Initialization**
+Set up the Semantic Kernel and load all plugins needed for downstream steps. `code_orchestration.py` calls `create_kernel()` to create a Semantic Kernel instance with two Azure OpenAI chat completion services: the primary model (`aoai_chat_completion`, gpt-4o) and a smaller model (`aoai_chat_completion_small`, gpt-4o-mini) for lightweight tasks. Plugins are loaded in parallel via `asyncio.create_task()`: Conversation (Triage, Answer, IsGrounded, NotInSourcesAnswer, ConversationSummary), Retrieval (VectorIndexRetrieval, BingRetrieval), Filters (ContentFilterValidator), and optionally Security and ResponsibleAI (Fairness). Credentials and secrets (APIM key if enabled) use cached instances via `get_credential()` and `get_secret()`.
+
+**3. Content Filter Check (Question Guardrail) — gpt-4o-mini**
+Detect if the user's question triggers Azure OpenAI's built-in content filters (hate, self-harm, sexual, violence). The raw question is sent to Azure OpenAI (using the small model/deployment) with `max_tokens=1`. It doesn't care about the response — it only checks whether the API returns an error with `content_filter` as the reason. If filtered, the answer is replaced with a canned blocked message and all subsequent steps are skipped.
+
+**4. Blocked List Check (Question Guardrail)**
+Check if the question contains any organization-defined blocked words. A blocked word list is fetched from Cosmos DB (cached after first fetch). The question is split into words and checked for exact matches. If a blocked word is found, the answer is replaced with a canned message and subsequent steps are skipped.
+
+**5. Security Hub Check (Optional Question Guardrail)**
+Run Azure AI Content Safety analysis on the question. Enabled via `SECURITY_HUB_CHECK` env var. The Security plugin's `QuestionSecurityCheck` calls the Azure AI Content Safety API. It checks category severity scores against configurable thresholds and blocklist matches. If any check fails, the question is blocked. On exception, a NotInSourcesAnswer fallback is generated.
+
+**6. Conversation Summary — gpt-4o-mini**
+Summarize prior conversation history to give context to the Triage and Answer steps without passing the entire history. If there is conversation history (`history != '[]'`), the ConversationSummary prompt (routed to gpt-4o-mini via `aoai_chat_completion_small`) produces a concise summary. On first turn (no history), this step is skipped entirely.
+
+**7. Triage (Intent Detection + Query Generation + Language Detection) — gpt-4o-mini**
+Classify the user's intent, generate an optimized search query, and detect the question language — all in a single LLM call. The Triage prompt (routed to gpt-4o-mini) asks Azure OpenAI to return a JSON object with `intents`, `answer`, `query_string`, and `language`. Valid intents are: `greeting`, `about_bot`, `follow_up`, `off_topic`, `question_answering`. For greetings/about_bot/off_topic, a direct answer is generated and the pipeline skips to step 11. For QA/follow-up, a search query (up to 25 words, preserving section numbers, clause references, and Act/Regulation names) is generated for the retrieval step. The detected language is set on `arguments["language"]` for use by downstream prompts. This replaces the previous separate DetectLanguage LLM call, reducing total LLM calls by one.
+
+**8. Retrieval (Azure AI Search + Optional Bing)**
+Retrieve relevant source documents from Azure AI Search (and optionally Bing) to ground the answer.
+
+- **Embedding generation:** The search query is embedded via the Azure OpenAI embeddings API using a cached `AzureOpenAI` client (module-level `_embedding_client` in `native_function.py`). The client is only recreated if the endpoint/deployment changes.
+- **Azure AI Search query:** The query is sent to Azure AI Search using the configured approach — hybrid (default, BM25 + vector), vector-only, or term-only. A security filter ensures users only see documents matching their security IDs or public documents. If `AZURE_SEARCH_USE_SEMANTIC` is `"true"` and a `AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG` is configured, `queryType: "semantic"` is added for semantic reranking. If semantic is requested but no config is set, a warning is logged and semantic ranking is disabled gracefully.
+- **Score filtering:** Results are filtered against a minimum score threshold. Two separate thresholds are used depending on the ranking mode: `AZURE_SEARCH_MIN_RERANKER_SCORE` (default 1.0, for semantic reranker scores on a 0–4 scale) or `AZURE_SEARCH_MIN_SEARCH_SCORE` (default 0.0, for raw search scores whose scale varies by approach). Documents below the threshold are dropped with per-document logging. A summary log shows how many documents passed vs. were dropped.
+- **Source formatting:** Passing documents are formatted as `[Source N] title (filepath):\ncontent` with contiguous numbering (N increments only for documents that pass the threshold, avoiding gaps).
+- **Empty sources short-circuit:** If no sources remain after filtering (or no documents were retrieved at all), the pipeline calls the NotInSourcesAnswer prompt (gpt-4o-mini) immediately and skips answer generation, groundedness, and fairness checks. This avoids wasting an expensive gpt-4o Answer call on empty context.
+- **Bing Retrieval (optional):** If `BING_RETRIEVAL` is enabled, Bing Custom Search results supplement the AI Search results. Results are ordered by `RETRIEVAL_PRIORITY` (search-first or bing-first).
+- **Authentication:** Uses a cached `ChainedTokenCredential` (via `get_credential()`) to obtain an Azure Search bearer token. For APIM-enabled deployments, the APIM key is used instead.
+
+**9. Answer Generation — gpt-4o**
+Generate the final answer grounded in the retrieved sources. The Answer prompt sends the bot description, user question, previous answer, conversation summary, detected language, full conversation history, and all retrieved sources to Azure OpenAI (gpt-4o, the primary model). The model is instructed to answer only from the provided sources, cite them with `[filepath][PageNumber]` format, and respond in the detected language. This is the most time-consuming step due to the large source context.
+
+**10. Blocked List Check (Answer Guardrail)**
+Ensure the generated answer doesn't contain any blocked words. The same word-matching check as Step 4 is performed on the generated answer text. If a blocked word is found, the answer is replaced with a canned message.
+
+**11. Groundedness + Fairness Checks (Parallel)**
+Verify answer quality through groundedness and fairness checks, running concurrently when both are enabled.
+
+When both `GROUNDEDNESS_CHECK` and `RESPONSIBLE_AI_CHECK` are enabled (the default), both checks run in parallel via `asyncio.gather()`:
+
+- **Groundedness Check (gpt-4o-mini):** The IsGrounded prompt sends both the generated answer and the full sources to Azure OpenAI (gpt-4o-mini) and asks whether the answer is based on the sources (output: "yes" or "no"). Despite having a large prompt (answer + all sources), the output is a single word, making this well-suited for the smaller model.
+- **Fairness Check (gpt-4o):** The Fairness prompt sends the answer to Azure OpenAI (gpt-4o, the primary model — fairness assessment requires more nuance) and evaluates whether it exhibits bias, discrimination, or unfair treatment.
+
+After both complete, groundedness is processed first (it takes priority). If the answer is ungrounded, a NotInSourcesAnswer replacement is generated and the fairness result is discarded. If grounded, the fairness result is applied — if unfair, the answer is replaced with a refusal.
+
+When only one check is enabled, it runs sequentially as a standalone call. Both checks only run for QA/follow-up intents.
+
+**12. Security Hub Check (Optional Answer Guardrail)**
+Run Azure AI Content Safety on the generated answer (same as Step 5 but on the output). Enabled via `SECURITY_HUB_CHECK`. Checks category severity scores, blocklist matches, and groundedness percentage against thresholds. If the answer fails, it's replaced with a NotInSourcesAnswer fallback.
+
+**13. Security Hub Audit (Optional)**
+If `SECURITY_HUB_AUDIT` is enabled, an audit record of the question, answer, sources, and security check results is logged via the Security plugin's `Auditing` function.
+
+**14. Save Conversation & Return**
+Persist the conversation and return the response. The assistant's answer is appended to the history, interaction metadata (user, response time, answer source, token counts, intents, detected language, model, conversation summary) is recorded, and the conversation is written back to Cosmos DB. A JSON response with `conversation_id`, formatted `answer`, `data_points`, and `thoughts` is returned.
+
+### Azure OpenAI Calls Summary
+
+6 Azure OpenAI calls are made per QA request (down from 7, after merging Language Detection into Triage):
+
+| # | Step | API | Model | Purpose |
+|---|---|---|---|---|
+| 1 | Content Filter | Chat Completions | gpt-4o-mini | Trigger content filters (max_tokens=1) |
+| 2 | Conversation Summary | Chat Completions | gpt-4o-mini | Summarize history (skipped on first turn) |
+| 3 | Triage | Chat Completions | gpt-4o-mini | Intent + search query + language detection |
+| 4 | Embedding | Embeddings | text-embedding | Embed search query for vector search |
+| 5 | Answer Generation | Chat Completions | gpt-4o | Generate answer from sources |
+| 6a | Groundedness | Chat Completions | gpt-4o-mini | Binary yes/no grounded check (parallel) |
+| 6b | Fairness | Chat Completions | gpt-4o | Bias/fairness evaluation (parallel with 6a) |
+
+**Conditional calls:** NotInSourcesAnswer (gpt-4o-mini) is called if sources are empty (replacing step 5) or if the answer is ungrounded (after step 6a). Security Hub calls are made only when `SECURITY_HUB_CHECK` is enabled.
+
+### Key Differences from Original Pipeline
+
+| Change | Before | After |
+|---|---|---|
+| Language Detection | Separate LLM call (step 6) | Merged into Triage (step 7) |
+| Model routing | All calls use gpt-4o | Lightweight calls use gpt-4o-mini |
+| Post-answer checks | Groundedness → Fairness (sequential) | Groundedness ∥ Fairness (parallel) |
+| Score filtering | None — all retrieved docs passed through | Min score threshold with per-doc logging |
+| Semantic ranking | Not default | Default on (with graceful fallback if config missing) |
+| Empty sources | Full Answer + IsGrounded pipeline runs | Short-circuit to NotInSourcesAnswer |
+| Source numbering | Index-based (gaps when docs dropped) | Contiguous (increments only for passing docs) |
+| Credential management | New ChainedTokenCredential per call | Cached singleton via get_credential() |
+| Secret caching | New Key Vault client per get_secret() | Cached after first fetch |
+| Embedding client | New AzureOpenAI client per call | Cached module-level, reused across requests |
+| Total LLM calls (QA) | 7 sequential | 6 (5 sequential + 2 parallel post-answer) |

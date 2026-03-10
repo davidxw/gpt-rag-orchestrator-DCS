@@ -1,0 +1,84 @@
+﻿"timestamp [UTC]",message,logLevel,severityLevel
+"3/9/2026, 5:59:38.572 AM","Executing 'Functions.orc' (Reason='This function was programmatically called via the host APIs.', Id=126ad620-708a-482b-9b1c-26ba4794b927)",Information,1
+"3/9/2026, 5:59:38.614 AM","Python HTTP trigger function processed a request.",Information,1
+"3/9/2026, 5:59:38.614 AM","[orchestrator] 14ba8431-b268-45c0-a740-6852dceb0827 starting conversation flow.",Information,1
+"3/9/2026, 5:59:38.710 AM","[orchestrator] customer sent an inexistent conversation_id, saving new conversation_id",Information,1
+"3/9/2026, 5:59:38.774 AM","[orchestrator] executing RAG retrieval using code orchestration",Information,1
+"3/9/2026, 5:59:38.777 AM","[code_orchest] starting RAG flow. What are  key rights and responsibilities of tenan",Information,1
+"3/9/2026, 5:59:38.790 AM","[util__module] Small model configured: gpt-4o-mini (deployment: chat-small)",Information,1
+"3/9/2026, 5:59:38.815 AM","[sk_retrieval] querying azure ai search. Azure Search Approach: hybrid",Information,1
+"3/9/2026, 5:59:38.820 AM","Function Filters-ContentFliterValidator invoking.",Information,1
+"3/9/2026, 5:59:38.821 AM","[sk_native_filters] querying azure openai on content filtering. user question: What are  key rights and responsibilities of tenants under the Residential Tenancies Act 2010?",Information,1
+"3/9/2026, 5:59:39.976 AM","[util__module] called chat completion api in 1.150000 seconds",Information,1
+"3/9/2026, 5:59:39.976 AM","[sk_native_filters] finished validating user question on filtered content. 1.15 seconds",Information,1
+"3/9/2026, 5:59:39.977 AM","Function Filters-ContentFliterValidator succeeded.",Information,1
+"3/9/2026, 5:59:39.979 AM","Function completed. Duration: 1.155107s",Information,1
+"3/9/2026, 5:59:40.061 AM","[util__module] get_blocked_list: no blocked words list (keyvalue store with 'blocked_list' id does not exist).",Information,1
+"3/9/2026, 5:59:40.066 AM","[code_orchest] finished content filter and blocklist check. 1.29 seconds.",Information,1
+"3/9/2026, 5:59:40.067 AM","[code_orchest] first time talking no need to summarize.",Information,1
+"3/9/2026, 5:59:40.068 AM","[code_orchest] ### STARTED checking intent. ask: What are  key rights and responsibilities of tenants under the Residential Tenancies Act 2010?",Information,1
+"3/9/2026, 5:59:40.069 AM","Function Conversation-Triage invoking.",Information,1
+"3/9/2026, 5:59:42.843 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat-small/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/9/2026, 5:59:42.844 AM","OpenAI usage: CompletionUsage(completion_tokens=225, prompt_tokens=1178, total_tokens=1403, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0))",Information,1
+"3/9/2026, 5:59:42.844 AM","Function Conversation-Triage succeeded.",Information,1
+"3/9/2026, 5:59:42.844 AM","Function completed. Duration: 2.780532s",Information,1
+"3/9/2026, 5:59:42.844 AM","[code_orchest] language detected by triage: English",Information,1
+"3/9/2026, 5:59:42.846 AM","[code_orchest] ### FINISHED checking intent. ask: What are  key rights and responsibilities of tenants under the Residential Tenancies Act 2010?. 2.78 seconds.",Information,1
+"3/9/2026, 5:59:42.846 AM","Function Retrieval-VectorIndexRetrieval invoking.",Information,1
+"3/9/2026, 5:59:42.848 AM","[sk_retrieval] generating question embeddings. search query: key rights and responsibilities of tenants under the Residential Tenancies Act 2010",Information,1
+"3/9/2026, 5:59:42.931 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/text-embedding/embeddings?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/9/2026, 5:59:42.936 AM","[sk_retrieval] finished generating question embeddings. 0.09 seconds",Information,1
+"3/9/2026, 5:59:42.936 AM","[sk_retrieval] querying azure ai search. search query: key rights and responsibilities of tenants under the Residential Tenancies Act 2010",Information,1
+"3/9/2026, 5:59:42.937 AM","[sk_retrieval] using semantic reranker score field: @search.rerankerScore, min threshold: 1.0",Information,1
+"3/9/2026, 5:59:43.284 AM","[sk_retrieval] 5 documents retrieved, applying min @search.rerankerScore threshold: 1.0",Information,1
+"3/9/2026, 5:59:43.290 AM","[sk_retrieval] 5/5 documents passed relevance threshold (0 dropped)",Information,1
+"3/9/2026, 5:59:43.292 AM","[sk_retrieval] finished querying azure ai search. 0.35 seconds",Information,1
+"3/9/2026, 5:59:43.292 AM","Function Retrieval-VectorIndexRetrieval succeeded.",Information,1
+"3/9/2026, 5:59:43.292 AM","Function completed. Duration: 0.442293s",Information,1
+"3/9/2026, 5:59:43.292 AM","[code_orchest] ### STARTED generating bot answer. ask: What are  key rights and responsibilities of tenants under the Residential Tenancies Act 2010?",Information,1
+"3/9/2026, 5:59:43.292 AM","Function Conversation-Answer invoking.",Information,1
+"3/9/2026, 5:59:52.119 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/9/2026, 5:59:52.125 AM","OpenAI usage: CompletionUsage(completion_tokens=706, prompt_tokens=8618, total_tokens=9324, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0))",Information,1
+"3/9/2026, 5:59:52.125 AM","Function Conversation-Answer succeeded.",Information,1
+"3/9/2026, 5:59:52.126 AM","Function completed. Duration: 8.829838s",Information,1
+"3/9/2026, 5:59:52.126 AM","[code_orchest] generating bot answer. answer: Under the Residential Tenancies Act 2010 (NSW), tenants have several key rights and responsibilities. Below is a summary based on the retrieved legislative text:
+
+### Key Rights of Tenants:
+1. **Quiet Enjoyment**: Tenants are entitled to quiet enjoyment of the residential premises without interruption by the landlord or others. Landlords must not interfere with the tenant's reasonable peace, comfort, or privacy. [ResidentialTenancyAct-2010-042.pdf][Page41]
+2. **Repayment of Excess Charges**: Tenants can request repayment of rent or other amounts paid in excess of what is required under the Act or the tenancy agreement. If the landlord does not comply within 14 days, tenants may apply to the Tribunal for an order. [ResidentialTenancyAct-2010-042.pdf][Page40]
+3. **Condition of Premises**: Landlords must ensure the premises are provided in a reasonable state of cleanliness and fit for habitation, including structural soundness, adequate lighting, ventilation, plumbing, and privacy in bathroom facilities. [ResidentialTenancyAct-2010-042.pdf][Page42]
+4. **Protection Against Excessive Rent**: Tenants may apply to the Tribunal for an order if rent increases are deemed excessive, considering factors such as market levels, property condition, and amenities. [ResidentialTenancyAct-2010-042.pdf][Page39]
+5. **Disclosure of Information**: Landlords must disclose material facts, such as proposals to sell the premises or mortgagee actions, before tenants enter into agreements. [ResidentialTenancyAct-2010-042.pdf][Page28]
+
+### Key Responsibilities of Tenants:
+1. **Use of Premises**: Tenants must not use the premises for illegal purposes, cause nuisance, or interfere with neighbors' peace and privacy. They must also avoid intentional or negligent damage to the premises. [ResidentialTenancyAct-2010-042.pdf][Page41]
+2. **Cleanliness and Maintenance**: Tenants must keep the premises in a reasonable state of cleanliness, notify landlords of any damage, and return the premises in a similar condition at the end of the tenancy, excluding fair wear and tear. [ResidentialTenancyAct-2010-042.pdf][Page41]
+3. **Liability for Actions of Others**: Tenants are vicariously responsible for actions of others lawfully on the premises, except in cases involving domestic violence. [ResidentialTenancyAct-2010-042.pdf][Page44]
+4. **Access to Premises**: Tenants must provide access to landlords for inspections, repairs, or emergencies, as outlined in the Act. [ResidentialTenancyAct-2010-042.pdf][Page45]
+5. **Payment Obligations**: Tenants must pay rent and other charges as agreed, and landlords must offer a free and convenient way for tenants to pay rent. [ResidentialTenancyAct-2010-042.pdf][Page32]
+
+### Hierarchy and Interaction:
+The Residential Tenancies Act 2010 governs the rights and responsibilities of tenants and landlords, with specific terms included in every residential tenancy agreement. The Act also provides mechanisms for dispute resolution through the Tribunal.
+
+Would you like further details on specific sections, such as remedies for disputes or landlord obligations?  
+- Subsections on rent increases or excessive rent orders.  
+- Tenant remedies for breaches of quiet enjoyment.  
+- Landlord's obligations for repairs and maintenance.",Information,1
+"3/9/2026, 5:59:52.126 AM","[code_orchest] ### FINISHED generating bot answer. ask: What are  key rights and responsibilities of tenants under the Residential Tenancies Act 2010?. 8.83 seconds.",Information,1
+"3/9/2026, 5:59:52.126 AM","[code_orchest] ### STARTED checking groundedness + fairness. answer: Under the Residential Tenancies Act 2010 (NSW), te",Information,1
+"3/9/2026, 5:59:52.126 AM","Function Conversation-IsGrounded invoking.",Information,1
+"3/9/2026, 5:59:52.126 AM","Function Semantic-Fairness invoking.",Information,1
+"3/9/2026, 5:59:52.876 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/9/2026, 5:59:52.876 AM","OpenAI usage: CompletionUsage(completion_tokens=20, prompt_tokens=977, total_tokens=997, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0))",Information,1
+"3/9/2026, 5:59:52.876 AM","Function Semantic-Fairness succeeded.",Information,1
+"3/9/2026, 5:59:52.876 AM","Function completed. Duration: 0.755999s",Information,1
+"3/9/2026, 5:59:53.845 AM","HTTP Request: POST https://oai0-ltpq2fb2vu5v2.openai.azure.com/openai/deployments/chat-small/chat/completions?api-version=2024-10-21 ""HTTP/1.1 200 OK""",Information,1
+"3/9/2026, 5:59:53.847 AM","OpenAI usage: CompletionUsage(completion_tokens=2, prompt_tokens=8416, total_tokens=8418, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cached_tokens=0))",Information,1
+"3/9/2026, 5:59:53.848 AM","Function Conversation-IsGrounded succeeded.",Information,1
+"3/9/2026, 5:59:53.849 AM","Function completed. Duration: 1.730163s",Information,1
+"3/9/2026, 5:59:53.850 AM","[code_orchest] is it grounded? yes.",Information,1
+"3/9/2026, 5:59:53.851 AM","[code_orchest] responsible ai check. Is it fair? True.",Information,1
+"3/9/2026, 5:59:53.852 AM","[code_orchest] ### FINISHED checking groundedness + fairness. answer: Under the Residential Tenancies Act 2010 (NSW), te. 1.73 seconds.",Information,1
+"3/9/2026, 5:59:53.852 AM","[code_orchest] finished RAG Flow. 15.07 seconds.",Information,1
+"3/9/2026, 5:59:53.924 AM","[orchestrator] 14ba8431-b268-45c0-a740-6852dceb0827 finished conversation flow. 15.24 seconds. answer: Under the Residential Tenancie",Information,1
+"3/9/2026, 5:59:53.927 AM","Executed 'Functions.orc' (Succeeded, Id=126ad620-708a-482b-9b1c-26ba4794b927, Duration=15357ms)",Information,1
