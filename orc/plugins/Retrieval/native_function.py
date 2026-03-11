@@ -129,7 +129,7 @@ async def _process_search_response(response, search_results, score_field, min_sc
             score = doc.get(score_field, 0)
             if score >= min_score:
                 search_results.append(
-                    f"[Source {len(search_results)+1}] {doc.get('title', '')} ({doc['filepath']}):\n{doc['content'].strip()}\n"
+                    f"[Source {len(search_results)+1}] Title: \"{doc.get('title', '')}\" File: ({doc['filepath']}):\n{doc['content'].strip()}\n"
                 )
             else:
                 logging.info(f"[sk_retrieval] Dropped doc below threshold: {doc['filepath']} ({score_field}: {score}, threshold: {min_score})")

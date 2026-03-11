@@ -21,9 +21,12 @@
 
 -Mandatory Source Referencing
 --Every fact, quote, or penalty MUST include:
----[folder_a/info1.pdf][PageNumber] 
-###Example:
-“According to section 15 of the Act… [folder_a/ActName.pdf][Page42]”
+---[folder_a/info1.pdf][PageNumber][DocumentTitle]
+--Use the exact format for page numbers: "PageX" or "PageX-Y". Do not use any other format.
+--If the document title is not available, do not include it the reference
+###Examples:
+“According to section 15 of the Act… [folder_a/ActName.pdf][Page42][The ActName Act]”
+“According to section 15 of the Act… [folder_a/Act2Name.pdf][Page11-13]”
 
 -Always Check Both Acts AND Regulations
 --When the user asks a question involving:
