@@ -112,51 +112,51 @@ async def _run_check(name, check_fn):
 # ── Settings report ──────────────────────────────────────────────────
 
 def _get_settings():
-    def _val(name, default=None):
-        return os.environ.get(name, default) or ""
+    def _val(name):
+        return os.environ.get(name) or ""
 
     return [
         {
             "group": "General",
             "settings": [
-                {"name": "ORCHESTRATOR_MESSAGES_LANGUAGE", "value": _val("ORCHESTRATOR_MESSAGES_LANGUAGE", "en"), "description": "Language code for orchestrator system messages"},
-                {"name": "CONVERSATION_MAX_HISTORY", "value": _val("CONVERSATION_MAX_HISTORY", "3"), "description": "Maximum number of conversation turns retained in history"},
-                {"name": "BLOCKED_LIST_CHECK", "value": _val("BLOCKED_LIST_CHECK", "true"), "description": "Enable blocked word list validation"},
-                {"name": "GROUNDEDNESS_CHECK", "value": _val("GROUNDEDNESS_CHECK", "true"), "description": "Enable answer groundedness verification"},
-                {"name": "RESPONSIBLE_AI_CHECK", "value": _val("RESPONSIBLE_AI_CHECK", "true"), "description": "Enable responsible AI content checks"},
-                {"name": "SECURITY_HUB_CHECK", "value": _val("SECURITY_HUB_CHECK", "false"), "description": "Enable Security Hub question/answer checks"},
-                {"name": "SECURITY_HUB_AUDIT", "value": _val("SECURITY_HUB_AUDIT", "false"), "description": "Enable Security Hub audit logging"},
+                {"name": "ORCHESTRATOR_MESSAGES_LANGUAGE", "value": _val("ORCHESTRATOR_MESSAGES_LANGUAGE"), "description": "Language code for orchestrator system messages"},
+                {"name": "CONVERSATION_MAX_HISTORY", "value": _val("CONVERSATION_MAX_HISTORY"), "description": "Maximum number of conversation turns retained in history"},
+                {"name": "BLOCKED_LIST_CHECK", "value": _val("BLOCKED_LIST_CHECK"), "description": "Enable blocked word list validation"},
+                {"name": "GROUNDEDNESS_CHECK", "value": _val("GROUNDEDNESS_CHECK"), "description": "Enable answer groundedness verification"},
+                {"name": "RESPONSIBLE_AI_CHECK", "value": _val("RESPONSIBLE_AI_CHECK"), "description": "Enable responsible AI content checks"},
+                {"name": "SECURITY_HUB_CHECK", "value": _val("SECURITY_HUB_CHECK"), "description": "Enable Security Hub question/answer checks"},
+                {"name": "SECURITY_HUB_AUDIT", "value": _val("SECURITY_HUB_AUDIT"), "description": "Enable Security Hub audit logging"},
             ],
         },
         {
             "group": "Azure OpenAI",
             "settings": [
                 {"name": "AZURE_OPENAI_RESOURCE", "value": _val("AZURE_OPENAI_RESOURCE"), "description": "Azure OpenAI resource name(s)"},
-                {"name": "AZURE_OPENAI_CHATGPT_DEPLOYMENT", "value": _val("AZURE_OPENAI_CHATGPT_DEPLOYMENT", "chat"), "description": "Chat model deployment name"},
+                {"name": "AZURE_OPENAI_CHATGPT_DEPLOYMENT", "value": _val("AZURE_OPENAI_CHATGPT_DEPLOYMENT"), "description": "Chat model deployment name"},
                 {"name": "AZURE_OPENAI_CHATGPT_MODEL", "value": _val("AZURE_OPENAI_CHATGPT_MODEL"), "description": "Chat model name (e.g. gpt-4o)"},
                 {"name": "AZURE_OPENAI_SMALL_RESOURCE", "value": _val("AZURE_OPENAI_SMALL_RESOURCE"), "description": "Optional OpenAI resource for small model (falls back to AZURE_OPENAI_RESOURCE)"},
                 {"name": "AZURE_OPENAI_SMALL_CHATGPT_MODEL", "value": _val("AZURE_OPENAI_SMALL_CHATGPT_MODEL"), "description": "Optional small chat model (falls back to AZURE_OPENAI_CHATGPT_MODEL)"},
                 {"name": "AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT", "value": _val("AZURE_OPENAI_SMALL_CHATGPT_DEPLOYMENT"), "description": "Optional small model deployment (falls back to AZURE_OPENAI_SMALL_CHATGPT_MODEL)"},
-                {"name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "value": _val("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding"), "description": "Embedding model deployment name"},
-                {"name": "AZURE_OPENAI_EMBEDDING_APIVERSION", "value": _val("AZURE_OPENAI_EMBEDDING_APIVERSION", "2024-05-01-preview"), "description": "API version for embedding calls"},
-                {"name": "AZURE_OPENAI_TEMPERATURE", "value": _val("AZURE_OPENAI_TEMPERATURE", "0.1"), "description": "Sampling temperature for chat completions"},
-                {"name": "AZURE_OPENAI_TOP_P", "value": _val("AZURE_OPENAI_TOP_P", "0.27"), "description": "Top-p (nucleus) sampling parameter"},
-                {"name": "AZURE_OPENAI_MAX_TOKENS", "value": _val("AZURE_OPENAI_MAX_TOKENS", "1000"), "description": "Maximum tokens in chat completion response"},
-                {"name": "AZURE_OPENAI_APIVERSION", "value": _val("AZURE_OPENAI_APIVERSION", "2024-05-01-preview"), "description": "API version for chat completion calls"},
+                {"name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "value": _val("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"), "description": "Embedding model deployment name"},
+                {"name": "AZURE_OPENAI_EMBEDDING_APIVERSION", "value": _val("AZURE_OPENAI_EMBEDDING_APIVERSION"), "description": "API version for embedding calls"},
+                {"name": "AZURE_OPENAI_TEMPERATURE", "value": _val("AZURE_OPENAI_TEMPERATURE"), "description": "Sampling temperature for chat completions"},
+                {"name": "AZURE_OPENAI_TOP_P", "value": _val("AZURE_OPENAI_TOP_P"), "description": "Top-p (nucleus) sampling parameter"},
+                {"name": "AZURE_OPENAI_MAX_TOKENS", "value": _val("AZURE_OPENAI_MAX_TOKENS"), "description": "Maximum tokens in chat completion response"},
+                {"name": "AZURE_OPENAI_APIVERSION", "value": _val("AZURE_OPENAI_APIVERSION"), "description": "API version for chat completion calls"},
             ],
         },
         {
             "group": "Azure Search",
             "settings": [
                 {"name": "AZURE_SEARCH_SERVICE", "value": _val("AZURE_SEARCH_SERVICE"), "description": "Azure AI Search service name"},
-                {"name": "AZURE_SEARCH_INDEX", "value": _val("AZURE_SEARCH_INDEX", "ragindex"), "description": "Search index name"},
-                {"name": "AZURE_SEARCH_API_VERSION", "value": _val("AZURE_SEARCH_API_VERSION", "2024-07-01"), "description": "Search REST API version"},
-                {"name": "AZURE_SEARCH_APPROACH", "value": _val("AZURE_SEARCH_APPROACH", "hybrid"), "description": "Search approach: hybrid, vector, or term"},
-                {"name": "AZURE_SEARCH_USE_SEMANTIC", "value": _val("AZURE_SEARCH_USE_SEMANTIC", "true"), "description": "Enable semantic ranking on search queries"},
-                {"name": "AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG", "value": _val("AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG", "my-semantic-config"), "description": "Semantic search configuration name"},
-                {"name": "AZURE_SEARCH_TOP_K", "value": _val("AZURE_SEARCH_TOP_K", "3"), "description": "Number of top search results to retrieve"},
-                {"name": "AZURE_SEARCH_MIN_RERANKER_SCORE", "value": _val("AZURE_SEARCH_MIN_RERANKER_SCORE", "1.0"), "description": "Minimum semantic reranker score threshold (0-4)"},
-                {"name": "AZURE_SEARCH_MIN_SEARCH_SCORE", "value": _val("AZURE_SEARCH_MIN_SEARCH_SCORE", "0.0"), "description": "Minimum search score threshold when semantic ranking is off"},
+                {"name": "AZURE_SEARCH_INDEX", "value": _val("AZURE_SEARCH_INDEX"), "description": "Search index name"},
+                {"name": "AZURE_SEARCH_API_VERSION", "value": _val("AZURE_SEARCH_API_VERSION"), "description": "Search REST API version"},
+                {"name": "AZURE_SEARCH_APPROACH", "value": _val("AZURE_SEARCH_APPROACH"), "description": "Search approach: hybrid, vector, or term"},
+                {"name": "AZURE_SEARCH_USE_SEMANTIC", "value": _val("AZURE_SEARCH_USE_SEMANTIC"), "description": "Enable semantic ranking on search queries"},
+                {"name": "AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG", "value": _val("AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG"), "description": "Semantic search configuration name"},
+                {"name": "AZURE_SEARCH_TOP_K", "value": _val("AZURE_SEARCH_TOP_K"), "description": "Number of top search results to retrieve"},
+                {"name": "AZURE_SEARCH_MIN_RERANKER_SCORE", "value": _val("AZURE_SEARCH_MIN_RERANKER_SCORE"), "description": "Minimum semantic reranker score threshold (0-4)"},
+                {"name": "AZURE_SEARCH_MIN_SEARCH_SCORE", "value": _val("AZURE_SEARCH_MIN_SEARCH_SCORE"), "description": "Minimum search score threshold when semantic ranking is off"},
             ],
         },
         {
