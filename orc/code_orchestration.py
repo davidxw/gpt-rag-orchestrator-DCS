@@ -118,7 +118,7 @@ async def get_answer(history, security_ids,conversation_id):
     raiNativePlugin = await raiNativePluginTask
     filterResult = await kernel.invoke(raiNativePlugin["ContentFliterValidator"], KernelArguments(input=ask,apim_key=apim_key))
     if not (filterResult.value.passed):
-        logging.info(f"[code_orchest] filtered content found in question: {ask}.")
+        logging.warning(f"[code_orchest] content filter check FAILED - question blocked: {ask}")
         answer = get_message('BLOCKED_ANSWER')
         answer_generated_by = 'content_filters_check'
         bypass_nxt_steps = True
@@ -130,7 +130,7 @@ async def get_answer(history, security_ids,conversation_id):
             ask_words=ask.lower().split()
             for blocked_word in blocked_list:
                 if blocked_word in ask_words:
-                    logging.info(f"[code_orchest] blocked word found in question: {blocked_word}.")
+                    logging.warning(f"[code_orchest] blocked list check FAILED - blocked word '{blocked_word}' found in question")
                     answer = get_message('BLOCKED_ANSWER')
                     answer_generated_by = 'blocked_list_check'
                     bypass_nxt_steps = True
@@ -318,7 +318,7 @@ async def get_answer(history, security_ids,conversation_id):
             answer_words = answer.lower().split()
             for blocked_word in blocked_list:
                 if blocked_word in answer_words:
-                    logging.info(f"[code_orchest] blocked word found in answer: {blocked_word}.")
+                    logging.warning(f"[code_orchest] blocked list check FAILED - blocked word '{blocked_word}' found in answer")
                     answer = get_message('BLOCKED_ANSWER')
                     answer_generated_by = "blocked_word_check"
                     break
@@ -360,6 +360,7 @@ async def get_answer(history, security_ids,conversation_id):
                     completion_tokens += c
                     logging.info(f"[code_orchest] is it grounded? {grounded}.")
                     if grounded.lower() == 'no':
+                        logging.warning(f"[code_orchest] groundedness check FAILED - answer replaced with not-in-sources response")
                         logging.info(f"[code_orchest] ungrounded answer: {answer}")
                         function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
                         p, c = get_token_counts(function_result)
@@ -381,10 +382,12 @@ async def get_answer(history, security_ids,conversation_id):
                     fairness_answer = fairness_result['answer']
                     prompt_tokens += fairness_result["prompt_tokens"]
                     completion_tokens += fairness_result["completion_tokens"]
-                    logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
                     if not fair:
+                        logging.warning(f"[code_orchest] fairness check FAILED - answer replaced by fairness plugin")
                         answer = fairness_answer
                         answer_generated_by = "rai_plugin_fairness"
+                    else:
+                        logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
                     answer_dict['pass_rai_fairness_check'] = fair
                 except Exception as e:
                     logging.error(f"[code_orchest] could not check responsible AI (fairness). {e}")
@@ -400,6 +403,7 @@ async def get_answer(history, security_ids,conversation_id):
                     completion_tokens += c
                     logging.info(f"[code_orchest] is it grounded? {grounded}.")
                     if grounded.lower() == 'no':
+                        logging.warning(f"[code_orchest] groundedness check FAILED - answer replaced with not-in-sources response")
                         logging.info(f"[code_orchest] ungrounded answer: {answer}")
                         function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
                         p, c = get_token_counts(function_result)
@@ -424,10 +428,12 @@ async def get_answer(history, security_ids,conversation_id):
                     fairness_answer = fairness_dict['answer']
                     prompt_tokens += fairness_dict["prompt_tokens"]
                     completion_tokens += fairness_dict["completion_tokens"]
-                    logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
                     if not fair:
+                        logging.warning(f"[code_orchest] fairness check FAILED - answer replaced by fairness plugin")
                         answer = fairness_answer
                         answer_generated_by = "rai_plugin_fairness"
+                    else:
+                        logging.info(f"[code_orchest] responsible ai check. Is it fair? {fair}.")
                     answer_dict['pass_rai_fairness_check'] = fair
             except Exception as e:
                 logging.error(f"[code_orchest] could not check responsible AI (fairness). {e}")

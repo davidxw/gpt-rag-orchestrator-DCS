@@ -39,6 +39,8 @@ def generate_security_ids(client_principal):
     security_ids = 'anonymous'
     if client_principal is not None:
         group_names = client_principal['group_names']
+        if isinstance(group_names, list):
+            group_names = ','.join(group_names)
         security_ids = f"{client_principal['id']}" + (f",{group_names}" if group_names else "")
     return security_ids    
     
