@@ -40,7 +40,7 @@ def generate_security_ids(client_principal):
     if client_principal is not None:
         group_names = client_principal['group_names']
         if isinstance(group_names, list):
-            group_names = ','.join(group_names)
+            group_names = ','.join(g for g in group_names if g is not None)
         security_ids = f"{client_principal['id']}" + (f",{group_names}" if group_names else "")
     return security_ids    
     

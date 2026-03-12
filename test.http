@@ -1,0 +1,12 @@
+@baseUrl = http://localhost:7071/api
+@principalId = 2f23cfaf-4351-454c-a8af-fcd2fa3c5f9a
+@conversationId = da656442-96c1-462b-87eb-5321eb010d54
+
+### List conversations for a user
+GET {{baseUrl}}/conversations?client_principal_id={{principalId}}&limit=10
+
+### List conversations (default limit)
+GET {{baseUrl}}/conversations?client_principal_id={{principalId}}
+
+### Get conversation detail
+GET {{baseUrl}}/conversation_detail?conversation_id={{conversationId}}&client_principal_id={{principalId}}
