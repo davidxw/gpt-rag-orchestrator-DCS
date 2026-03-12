@@ -40,6 +40,9 @@ def generate_security_ids(client_principal):
     if client_principal is not None:
         group_names = client_principal['group_names']
         if isinstance(group_names, list):
+            none_count = sum(1 for g in group_names if g is None)
+            if none_count > 0:
+                logging.warning(f"[orchestrator] {none_count} None value(s) found in group_names list, filtering out")
             group_names = ','.join(g for g in group_names if g is not None)
         security_ids = f"{client_principal['id']}" + (f",{group_names}" if group_names else "")
     return security_ids    
