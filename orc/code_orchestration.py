@@ -1,3 +1,16 @@
+# -------------------------------------------
+# Step                          | Model
+# -------------------------------------------
+# ConversationSummary           | Small 
+# Triage / DetectLanguage       | Small 
+# Retrieval (embeddings)        | Embedding
+# Semantic Cache (embeddings)   | Embedding 
+# NotInSourcesAnswer            | Small 
+# Answer                        | Large
+# IsGrounded                    | Small 
+# Fairness                      | Large 
+# -------------------------------------------
+
 # imports
 import json
 import logging
@@ -39,6 +52,7 @@ CONVERSATION_METADATA = os.environ.get("CONVERSATION_METADATA") or "true"
 CONVERSATION_METADATA = True if CONVERSATION_METADATA.lower() == "true" else False
 
 AZURE_OPENAI_CHATGPT_MODEL = os.environ.get("AZURE_OPENAI_CHATGPT_MODEL")
+AZURE_OPENAI_SMALL_CHATGPT_MODEL = os.environ.get("AZURE_OPENAI_SMALL_CHATGPT_MODEL") or AZURE_OPENAI_CHATGPT_MODEL
 CONVERSATION_MAX_HISTORY = os.environ.get("CONVERSATION_MAX_HISTORY") or "3"
 CONVERSATION_MAX_HISTORY = int(CONVERSATION_MAX_HISTORY)
 ORCHESTRATOR_FOLDER = "orc"
@@ -80,8 +94,10 @@ async def get_answer(history, security_ids,conversation_id):
     conversation_plugin_answer = ""
     conversation_history_summary = ''
     answer_generated_by = "none"
-    prompt_tokens = 0
-    completion_tokens = 0
+    large_model_prompt_tokens = 0
+    large_model_completion_tokens = 0
+    small_model_prompt_tokens = 0
+    small_model_completion_tokens = 0
     question_embedding = None
     cache_hit = False
     apim_key=None
@@ -210,8 +226,8 @@ async def get_answer(history, security_ids,conversation_id):
                 with timed_step("summarizing conversation"):
                     summary_result = await call_semantic_function(kernel, conversationPlugin["ConversationSummary"], arguments)
                     p, c = get_token_counts(summary_result)
-                    prompt_tokens += p
-                    completion_tokens += c
+                    small_model_prompt_tokens += p
+                    small_model_completion_tokens += c
                     conversation_history_summary = str(summary_result)
             else:
                 logging.info(f"[code_orchest] first time talking no need to summarize.")
@@ -223,8 +239,8 @@ async def get_answer(history, security_ids,conversation_id):
             with timed_step(f"checking intent. ask: {ask}"):
                 triage_dict = await triage(kernel, conversationPlugin, arguments)
                 intents = triage_dict['intents']
-                prompt_tokens += triage_dict["prompt_tokens"]
-                completion_tokens += triage_dict["completion_tokens"]
+                small_model_prompt_tokens += triage_dict["prompt_tokens"]
+                small_model_completion_tokens += triage_dict["completion_tokens"]
                 detected_language = triage_dict.get('language', '')
                 if detected_language:
                     arguments["language"] = detected_language
@@ -269,8 +285,9 @@ async def get_answer(history, security_ids,conversation_id):
                         function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
                         answer = str(function_result)
                         answer_generated_by = "no_sources_found"
-                        prompt_tokens += get_usage_tokens(function_result, 'prompt')
-                        completion_tokens += get_usage_tokens(function_result, 'completion')
+                        p, c = get_usage_tokens(function_result, 'prompt'), get_usage_tokens(function_result, 'completion')
+                        small_model_prompt_tokens += p
+                        small_model_completion_tokens += c
                         bypass_nxt_steps = True
                 else:
                     # Generate the answer augmented by the retrieval
@@ -283,8 +300,8 @@ async def get_answer(history, security_ids,conversation_id):
                         conversation_plugin_answer = answer
                         answer_generated_by = "conversation_plugin_answer"
                         p, c = get_token_counts(function_result)
-                        prompt_tokens += p
-                        completion_tokens += c
+                        large_model_prompt_tokens += p
+                        large_model_completion_tokens += c
                         prompt = str(function_result.metadata['messages'][0])
 
             # Handle general intents
@@ -356,16 +373,16 @@ async def get_answer(history, security_ids,conversation_id):
                 try:
                     grounded = str(groundedness_result)
                     p, c = get_token_counts(groundedness_result)
-                    prompt_tokens += p
-                    completion_tokens += c
+                    small_model_prompt_tokens += p
+                    small_model_completion_tokens += c
                     logging.info(f"[code_orchest] is it grounded? {grounded}.")
                     if grounded.lower() == 'no':
                         logging.warning(f"[code_orchest] groundedness check FAILED - answer replaced with not-in-sources response")
                         logging.info(f"[code_orchest] ungrounded answer: {answer}")
                         function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
                         p, c = get_token_counts(function_result)
-                        prompt_tokens += p
-                        completion_tokens += c
+                        small_model_prompt_tokens += p
+                        small_model_completion_tokens += c
                         answer = str(function_result)
                         answer_dict['gpt_groundedness'] = 1
                         answer_generated_by = "gpt_groundedness_check"
@@ -380,8 +397,8 @@ async def get_answer(history, security_ids,conversation_id):
                 try:
                     fair = fairness_result['fair']
                     fairness_answer = fairness_result['answer']
-                    prompt_tokens += fairness_result["prompt_tokens"]
-                    completion_tokens += fairness_result["completion_tokens"]
+                    large_model_prompt_tokens += fairness_result["prompt_tokens"]
+                    large_model_completion_tokens += fairness_result["completion_tokens"]
                     if not fair:
                         logging.warning(f"[code_orchest] fairness check FAILED - answer replaced by fairness plugin")
                         answer = fairness_answer
@@ -399,16 +416,16 @@ async def get_answer(history, security_ids,conversation_id):
                     function_result = await call_semantic_function(kernel, conversationPlugin["IsGrounded"], arguments)
                     grounded =  str(function_result)
                     p, c = get_token_counts(function_result)
-                    prompt_tokens += p
-                    completion_tokens += c
+                    small_model_prompt_tokens += p
+                    small_model_completion_tokens += c
                     logging.info(f"[code_orchest] is it grounded? {grounded}.")
                     if grounded.lower() == 'no':
                         logging.warning(f"[code_orchest] groundedness check FAILED - answer replaced with not-in-sources response")
                         logging.info(f"[code_orchest] ungrounded answer: {answer}")
                         function_result = await call_semantic_function(kernel, conversationPlugin["NotInSourcesAnswer"], arguments)
                         p, c = get_token_counts(function_result)
-                        prompt_tokens += p
-                        completion_tokens += c
+                        small_model_prompt_tokens += p
+                        small_model_completion_tokens += c
                         answer =  str(function_result)
                         answer_dict['gpt_groundedness'] = 1
                         answer_generated_by = "gpt_groundedness_check"
@@ -426,8 +443,8 @@ async def get_answer(history, security_ids,conversation_id):
                     fairness_dict = await fairness(kernel, raiPlugin, arguments)
                     fair = fairness_dict['fair']
                     fairness_answer = fairness_dict['answer']
-                    prompt_tokens += fairness_dict["prompt_tokens"]
-                    completion_tokens += fairness_dict["completion_tokens"]
+                    large_model_prompt_tokens += fairness_dict["prompt_tokens"]
+                    large_model_completion_tokens += fairness_dict["completion_tokens"]
                     if not fair:
                         logging.warning(f"[code_orchest] fairness check FAILED - answer replaced by fairness plugin")
                         answer = fairness_answer
@@ -502,9 +519,12 @@ async def get_answer(history, security_ids,conversation_id):
         answer_dict["answer_generated_by"] = answer_generated_by
         answer_dict["conversation_history_summary"] = conversation_history_summary
         answer_dict["conversation_plugin_answer"] = conversation_plugin_answer
-        answer_dict["model"] = AZURE_OPENAI_CHATGPT_MODEL
-        answer_dict["prompt_tokens"] = prompt_tokens
-        answer_dict["completion_tokens"] = completion_tokens
+        answer_dict["large_model"] = AZURE_OPENAI_CHATGPT_MODEL
+        answer_dict["small_model"] = AZURE_OPENAI_SMALL_CHATGPT_MODEL
+        answer_dict["large_model_prompt_tokens"] = large_model_prompt_tokens
+        answer_dict["large_model_completion_tokens"] = large_model_completion_tokens
+        answer_dict["small_model_prompt_tokens"] = small_model_prompt_tokens
+        answer_dict["small_model_completion_tokens"] = small_model_completion_tokens
 
     if SECURITY_HUB_AUDIT:
         logging.info(f"[code_orchest] security hub audit.")

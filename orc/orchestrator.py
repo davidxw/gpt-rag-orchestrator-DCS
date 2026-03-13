@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from azure.cosmos.aio import CosmosClient
-from datetime import datetime
+from datetime import datetime, timezone
 from shared.util import format_answer, get_credential
 from azure.identity.aio import ManagedIdentityCredential, AzureCliCredential, ChainedTokenCredential
 import orc.code_orchestration as code_orchestration
@@ -76,7 +76,7 @@ async def run(conversation_id, ask, client_principal):
 
         # get conversation data
         conversation_data = conversation.get('conversation_data', 
-                                            {'start_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'interactions': []})
+                                            {'start_date': datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), 'interactions': []})
     
         # history
         history = conversation.get('history', [])
