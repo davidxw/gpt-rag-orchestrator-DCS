@@ -83,7 +83,7 @@ async def get_answer(history, security_ids,conversation_id):
     prompt = "The prompt is only recorded for question-answering intents"
     answer = ""
     intents = []
-    bot_description = open(BOT_DESCRIPTION_FILE, "r").read()
+    bot_description = open(BOT_DESCRIPTION_FILE, "r", encoding="utf-8").read()
     search_query = ""
     sources = ""
     detected_language = ""
