@@ -26,7 +26,15 @@ MAX_COMMENT_LEN = 4000
 ALLOWED_RATINGS = {"up", "down"}
 
 
-def _bad_request(detail: str) -> func.HttpResponse:
+def _bad_request(detail: str, **context) -> func.HttpResponse:
+    if context:
+        logging.warning(
+            "[feedback] invalid_request: %s | context=%s",
+            detail,
+            json.dumps(context, default=str),
+        )
+    else:
+        logging.warning("[feedback] invalid_request: %s", detail)
     return func.HttpResponse(
         json.dumps({"error": "invalid_request", "detail": detail}),
         mimetype="application/json",
@@ -49,10 +57,31 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
     except ValueError:
+        raw = None
+        try:
+            raw = req.get_body().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+        logging.warning(
+            "[feedback] invalid JSON body | content_type=%s raw=%r",
+            req.headers.get("content-type"),
+            (raw or "")[:500],
+        )
         return _bad_request("request body must be valid JSON")
 
     if not isinstance(body, dict):
-        return _bad_request("request body must be a JSON object")
+        return _bad_request(
+            "request body must be a JSON object",
+            body_type=type(body).__name__,
+        )
+
+    # Diagnostic log: shape of payload (keys + types). Avoid logging values
+    # to limit PII; comment/question text is intentionally omitted.
+    try:
+        field_types = {k: type(v).__name__ for k, v in body.items()}
+        logging.info("[feedback] request payload fields=%s", field_types)
+    except Exception:  # noqa: BLE001
+        pass
 
     conversation_id = body.get("conversation_id")
     question = body.get("question")
@@ -67,31 +96,58 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
     # Validation
     if not isinstance(conversation_id, str) or not conversation_id.strip():
-        return _bad_request("conversation_id is required")
+        return _bad_request(
+            "conversation_id is required",
+            conversation_id_type=type(conversation_id).__name__,
+        )
     if not isinstance(answer, str) or not answer.strip():
-        return _bad_request("answer is required")
+        return _bad_request(
+            "answer is required", answer_type=type(answer).__name__
+        )
     if rating not in ALLOWED_RATINGS:
-        return _bad_request('rating must be "up" or "down"')
+        return _bad_request(
+            'rating must be "up" or "down"',
+            rating=rating,
+            rating_type=type(rating).__name__,
+        )
     if not isinstance(comment, str):
-        return _bad_request("comment must be a string")
+        return _bad_request(
+            "comment must be a string",
+            comment_type=type(comment).__name__,
+            comment_repr=repr(comment)[:200],
+        )
     if len(comment) > MAX_COMMENT_LEN:
-        return _bad_request(f"comment exceeds {MAX_COMMENT_LEN} character limit")
+        return _bad_request(
+            f"comment exceeds {MAX_COMMENT_LEN} character limit",
+            comment_len=len(comment),
+        )
 
     if message_index is not None:
         if isinstance(message_index, bool) or not isinstance(message_index, int):
-            return _bad_request("message_index must be an integer")
+            return _bad_request(
+                "message_index must be an integer",
+                message_index=message_index,
+                message_index_type=type(message_index).__name__,
+            )
 
     if client_group_names is not None and not (
         isinstance(client_group_names, list)
         and all(isinstance(g, str) for g in client_group_names)
     ):
-        return _bad_request("client_group_names must be an array of strings")
+        return _bad_request(
+            "client_group_names must be an array of strings",
+            client_group_names_type=type(client_group_names).__name__,
+        )
 
     if question is not None and not isinstance(question, str):
-        return _bad_request("question must be a string")
+        return _bad_request(
+            "question must be a string", question_type=type(question).__name__
+        )
 
     if not isinstance(source, str) or not source.strip():
-        return _bad_request("source must be a non-empty string")
+        return _bad_request(
+            "source must be a non-empty string", source=source
+        )
 
     feedback_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
