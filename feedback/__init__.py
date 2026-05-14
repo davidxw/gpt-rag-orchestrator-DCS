@@ -63,6 +63,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
     client_principal_id = body.get("client_principal_id")
     client_principal_name = body.get("client_principal_name")
     client_group_names = body.get("client_group_names")
+    source = body.get("source", "frontend")
 
     # Validation
     if not isinstance(conversation_id, str) or not conversation_id.strip():
@@ -89,6 +90,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
     if question is not None and not isinstance(question, str):
         return _bad_request("question must be a string")
 
+    if not isinstance(source, str) or not source.strip():
+        return _bad_request("source must be a non-empty string")
+
     feedback_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
         f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
@@ -107,7 +111,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             "groups": client_group_names or [],
         },
         "timestamp": timestamp,
-        "source": "frontend",
+        "source": source,
     }
 
     try:
