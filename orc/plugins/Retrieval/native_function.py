@@ -1,6 +1,7 @@
 from shared.util import get_secret, get_aoai_config, extract_text_from_html, get_possitive_int_or_default, get_credential
 # from semantic_kernel.skill_definition import sk_function
 from openai import AzureOpenAI
+from azure.identity import ChainedTokenCredential, ManagedIdentityCredential, AzureCliCredential, get_bearer_token_provider
 from semantic_kernel.functions import kernel_function
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 import logging
@@ -84,6 +85,26 @@ APIM_AZURE_SEARCH_URL = os.environ.get('APIM_AZURE_SEARCH_URL', "")
 # Embedding client cache
 _embedding_client = None
 _embedding_config_cache = None
+_sync_token_provider = None
+
+
+def _get_sync_token_provider():
+    """Return a cached sync bearer-token provider for Cognitive Services.
+
+    The OpenAI SDK invokes this callable on every request and handles refresh
+    automatically, so cached AAD tokens cannot go stale.
+    """
+    global _sync_token_provider
+    if _sync_token_provider is None:
+        credential = ChainedTokenCredential(
+            ManagedIdentityCredential(),
+            AzureCliCredential(),
+        )
+        _sync_token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+    return _sync_token_provider
+
 
 @retry(wait=wait_random_exponential(min=2, max=60), stop=stop_after_attempt(6), reraise=True)
 # Function to generate embeddings for title and content fields, also used for query embeddings
@@ -102,7 +123,7 @@ async def generate_embeddings(text,apim_key=None):
             _embedding_client = AzureOpenAI(
                 api_version=embeddings_config['api_version'],
                 azure_endpoint=embeddings_config['endpoint'],
-                azure_ad_token=embeddings_config['api_key'],
+                azure_ad_token_provider=_get_sync_token_provider(),
             )
         _embedding_config_cache = config_key
 
