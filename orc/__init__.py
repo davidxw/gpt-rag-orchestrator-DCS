@@ -26,6 +26,19 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
     if question:
 
+        # # --- TEMP: short-circuit for UI testing ---------------------------------
+        # # Returns a canned response immediately without invoking the RAG pipeline.
+        # # Remove / comment out this block to restore full orchestration.
+        # import uuid
+        # result = {
+        #     "conversation_id": conversation_id or str(uuid.uuid4()),
+        #     "answer": f"[DUMMY RESPONSE] You asked: {question}",
+        #     "data_points": [],
+        #     "thoughts": "Short-circuited orchestrator for UI testing.",
+        # }
+        # return func.HttpResponse(json.dumps(result), mimetype="application/json", status_code=200)
+        # # ------------------------------------------------------------------------
+
         result = await orchestrator.run(conversation_id, question, client_principal)
 
         return func.HttpResponse(json.dumps(result), mimetype="application/json", status_code=200)
